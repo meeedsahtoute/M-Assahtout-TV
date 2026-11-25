@@ -1,0 +1,19 @@
+[package]
+name = "streamtube-android"
+version = "0.7.5-alpha"
+edition = "2024"
+description = "JNI bindings exposing streamtube-core to Android & Android TV"
+license = "MIT"
+
+[lib]
+name = "streamtube_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+streamtube-core = { path = "../streamtube-core" }
+anyhow = "1"
+jni = "0.21"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"

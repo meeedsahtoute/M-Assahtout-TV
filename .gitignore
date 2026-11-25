@@ -1,0 +1,29 @@
+/target
+**/*.rs.bk
+
+# libmpv binaries are too large for git; see the README for where to get them
+/third_party/mpv/
+
+*.pdb
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# installers and packages
+/dist/
+
+# built in CI from the Khronos Vulkan-Loader sources
+/third_party/vulkan/
+
+# Android build artifacts & compiled JNI shared libs
+/android/app/src/main/jniLibs/
+/android/.gradle/
+/android/app/build/
+/android/build/
+/android/local.properties
+/android/*.keystore
+/android/*.jks
+/android/gradlew
+/android/gradlew.bat
+/android/gradle/wrapper/gradle-wrapper.jar

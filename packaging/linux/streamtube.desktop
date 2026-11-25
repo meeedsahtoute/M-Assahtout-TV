@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=M. ASSAHTOUT TV
+GenericName=Streaming client
+Comment=Custom native desktop and TV streaming client
+Exec=streamtube %u
+Icon=streamtube
+Terminal=false
+Categories=AudioVideo;Video;Player;Network;
+Keywords=youtube;video;player;
+MimeType=x-scheme-handler/streamtube;
+StartupWMClass=streamtube

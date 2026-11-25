@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.meeedsahtoute.MAssahtoutTV</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>M. ASSAHTOUT TV</name>
+  <summary>Custom native desktop and TV streaming client</summary>
+  <description>
+    <p>
+      M. ASSAHTOUT TV is a custom-built native desktop and TV streaming client powered by
+      Rust and hardware-accelerated playback without ads, browsers, or tracking.
+    </p>
+    <ul>
+      <li>Home, Shorts, subscriptions, channels, playlists, search and live streams</li>
+      <li>Built-in SponsorBlock, DeArrow titles and thumbnails, and Return YouTube Dislike</li>
+      <li>Background play, picture-in-picture, downloads and audio-only mode</li>
+      <li>Local subscriptions and history stored privately on your device</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">streamtube.desktop</launchable>
+  <url type="homepage">https://github.com/meeedsahtoute/M-Assahtout-TV</url>
+  <url type="bugtracker">https://github.com/meeedsahtoute/M-Assahtout-TV/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.7.5-alpha" date="2026-11-25" type="development" />
+  </releases>
+</component>

@@ -1,0 +1,181 @@
+name: Build Android & Android TV APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "android/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-android-apk.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "android/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/build-android-apk.yml"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      publish_release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # arm64-v8a  → Chromecast 4K, Google TV Streamer, NVIDIA Shield, modern boxes
+          # armeabi-v7a → Chromecast HD, budget Google TV boxes running 32-bit ART
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components and verify NDK
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          if [ -z "${ANDROID_NDK_ROOT:-}" ] || [ ! -d "${ANDROID_NDK_ROOT}" ]; then
+            "$SDKMANAGER" "ndk;27.2.12479018"
+            NDK_DIR="${SDK_ROOT}/ndk/27.2.12479018"
+          else
+            NDK_DIR="${ANDROID_NDK_ROOT}"
+          fi
+          echo "Using NDK at ${NDK_DIR}"
+          echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${NDK_DIR}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${NDK_DIR}" >> "$GITHUB_ENV"
+          echo "NDK_HOME=${NDK_DIR}" >> "$GITHUB_ENV"
+          echo "${SDK_ROOT}/platform-tools" >> "$GITHUB_PATH"
+          echo "${SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+      - name: Check streamtube-core (host target)
+        run: cargo check -p streamtube-core
+
+      - name: Compile libstreamtube_core.so (arm64-v8a + armeabi-v7a)
+        run: |
+          mkdir -p android/app/src/main/jniLibs
+          cargo ndk \
+            -t arm64-v8a \
+            -t armeabi-v7a \
+            --platform 26 \
+            -o android/app/src/main/jniLibs \
+            build -p streamtube-android --release
+          echo "── Built .so files ──"
+          ls -lh android/app/src/main/jniLibs/arm64-v8a/libstreamtube_core.so
+          ls -lh android/app/src/main/jniLibs/armeabi-v7a/libstreamtube_core.so
+
+      - name: Prepare release signing keystore
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "Using repository keystore secret"
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/release.keystore
+          else
+            echo "Generating self-signed keystore (CI default)"
+            keytool -genkeypair -v \
+              -keystore android/release.keystore \
+              -storepass "${ANDROID_KEYSTORE_PASSWORD:-streamtube123}" \
+              -keypass "${ANDROID_KEY_PASSWORD:-streamtube123}" \
+              -alias "${ANDROID_KEY_ALIAS:-streamtube}" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=M. ASSAHTOUT TV, OU=AndroidTV, O=m.assahtoute, L=Internet, S=Net, C=MA"
+          fi
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'streamtube123' }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'streamtube' }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'streamtube123' }}
+        run: |
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Package and verify M-Assahtout-TV.apk
+        id: pkg
+        run: |
+          mkdir -p dist
+          APK_SRC=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          echo "Found APK: $APK_SRC"
+          cp "$APK_SRC" dist/M-Assahtout-TV.apk
+          # Verify signature and both ABI .so files are present
+          "${ANDROID_SDK_ROOT}/build-tools/35.0.0/apksigner" verify --verbose dist/M-Assahtout-TV.apk
+          echo "── ABI check ──"
+          unzip -l dist/M-Assahtout-TV.apk | grep libstreamtube_core
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          ls -lh dist/M-Assahtout-TV.apk
+
+      - name: Upload M-Assahtout-TV.apk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: M-Assahtout-TV-APK
+          path: dist/M-Assahtout-TV.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish Android TV GitHub Release
+        if: github.event_name != 'pull_request' && github.event_name != 'workflow_call' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-tv-v${{ steps.pkg.outputs.version }}
+          name: "M. ASSAHTOUT TV Android TV v${{ steps.pkg.outputs.version }}"
+          body: |
+            ## M. ASSAHTOUT TV for Android TV & Google TV
+
+            Custom-built Android / Google TV streaming release powered by Kotlin, Jetpack Compose, and native `streamtube-core` Rust JNI bindings.
+
+            ### Installation
+            **Via ADB:** `adb install M-Assahtout-TV.apk`
+            **Via Downloader app:** paste the GitHub Release asset URL in Downloader, then enable *Unknown sources* for Downloader in Settings → Apps.
+
+            > [!NOTE]
+            > On Google TV: Settings → System → About → Android TV OS build (tap 7× to enable Developer Options) → turn on Unknown sources for the installer app you use.
+
+            ### What's inside
+            - **ARM64** (`arm64-v8a`) — Chromecast with Google TV 4K, Google TV Streamer, NVIDIA Shield, Xiaomi TV Box S 2nd Gen
+            - **ARM32** (`armeabi-v7a`) — Chromecast with Google TV HD, budget TV boxes running 32-bit ART
+            - Media3 ExoPlayer `MergingMediaSource` (adaptive 4K AV1/VP9/H.264 + separate audio — no yt-dlp needed)
+            - SponsorBlock auto-skip & seekbar markers · DeArrow titles/thumbnails · Return YouTube Dislike
+            - Local SQLite: subscriptions, history, resume positions, playlists
+            - Phone-to-TV Companion Web Server on port 8787 (QR code in Settings)
+          files: dist/M-Assahtout-TV.apk
+          prerelease: true
+          make_latest: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,59 @@
+[workspace]
+members = [".", "crates/streamtube-core", "crates/streamtube-android"]
+resolver = "2"
+
+[package]
+name = "streamtube"
+version = "0.7.5-alpha"
+edition = "2024"
+description = "M. ASSAHTOUT TV — custom desktop & Android TV streaming client written in Rust"
+license = "MIT"
+
+[dependencies]
+streamtube-core = { path = "crates/streamtube-core" }
+gpui-kit = "0.10"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["json", "socks-proxy"] }
+url = "2"
+rusqlite = { version = "0.43", features = ["bundled"] }
+parking_lot = "0.12"
+sha2 = "0.11"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+dirs = "6"
+libloading = "0.9"
+image = { version = "0.25", default-features = false }
+futures = "0.3"
+smallvec = "1"
+rand = "0.9"
+open = "5"
+raw-window-handle = "0.6"
+sha1 = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# already in the tree through GPUI; used to hide the pointer with the player controls
+objc2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# already in the tree through GPUI's Windows backend
+windows = { version = "0.62", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[profile.dev]
+opt-level = 1
+
+[build-dependencies]
+embed-resource = "3"
+
+# GPUI's Windows text backend with one fix: right-to-left text (Arabic, Hebrew)
+# was drawn mirrored. See vendor/gpui-pre-windows/PATCHES.md.
+[patch.crates-io]
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
