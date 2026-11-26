@@ -77,13 +77,12 @@ fn main() {
                 window_min_size: Some(size(px(720.), px(480.))),
                 ..Default::default()
             };
-            let main_win = gpui_kit::open_window(opts, cx, |window, cx| {
+            let (main_handle, _) = gpui_kit::open_window(opts, cx, |window, cx| {
                 ui::apply_theme(Some(window), cx);
                 cx.new(|cx| ui::app::AppView::new(window, cx))
             })
             .expect("failed to open window");
             // Ensure Windows enters borderless fullscreen and hides the taskbar cleanly on launch.
-            let main_handle: AnyWindowHandle = main_win.into();
             cx.spawn(async move |cx| {
                 for _ in 0..10 {
                     cx.background_executor().timer(std::time::Duration::from_millis(20)).await;
