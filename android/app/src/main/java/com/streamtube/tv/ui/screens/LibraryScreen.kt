@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,7 +22,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,17 +40,21 @@ import com.streamtube.tv.ui.ErrorPane
 import com.streamtube.tv.ui.LoadingPane
 import com.streamtube.tv.ui.StColors
 import com.streamtube.tv.ui.TvButton
+import com.streamtube.tv.ui.TvChip
 import com.streamtube.tv.ui.TvTextField
 import com.streamtube.tv.ui.VideoCard
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun LibraryScreen(
+    contentFocusRequester: FocusRequester,
+    railFocusRequester: FocusRequester,
     onPlayVideo: (VideoItemDto) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var playlists by remember { mutableStateOf<List<LocalPlaylistDto>>(emptyList()) }
-    var selectedTab by remember { mutableStateOf<Long>(-1L) } // -1 = History
+    var selectedTab by remember { mutableStateOf<Long>(-1L) }
     var history by remember { mutableStateOf<List<HistoryEntryDto>>(emptyList()) }
     var playlistVideos by remember { mutableStateOf<List<VideoItemDto>>(emptyList()) }
     var playlistProgress by remember { mutableStateOf<Map<String, ProgressEntryDto>>(emptyMap()) }
@@ -159,20 +167,23 @@ fun LibraryScreen(
 
         LazyRow(
             contentPadding = PaddingValues(horizontal = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
-                TvButton(
+            item(key = "tab_history", contentType = "lib_tab") {
+                TvChip(
                     label = "Watch History",
                     selected = selectedTab == -1L,
                     onClick = {
                         selectedTab = -1L
                         loadTab(-1L)
-                    }
+                    },
+                    modifier = Modifier
+                        .focusRequester(contentFocusRequester)
+                        .focusProperties { left = railFocusRequester }
                 )
             }
-            items(playlists, key = { it.id }) { pl ->
-                TvButton(
+            items(playlists, key = { it.id }, contentType = { "lib_tab" }) { pl ->
+                TvChip(
                     label = "${pl.name} (${pl.count})",
                     selected = selectedTab == pl.id,
                     onClick = {
@@ -183,7 +194,7 @@ fun LibraryScreen(
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
         when {
             loading -> LoadingPane("Loading library…")
@@ -192,12 +203,16 @@ fun LibraryScreen(
             selectedTab == -1L -> {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 250.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(history, key = { it.video.id }) { entry ->
+                    itemsIndexed(
+                        items = history,
+                        key = { idx, entry -> "hist_${entry.video.id}_$idx" },
+                        contentType = { _, _ -> "video_card" }
+                    ) { _, entry ->
                         VideoCard(
                             video = entry.video,
                             progress = ProgressEntryDto(entry.progress, entry.duration),
@@ -209,12 +224,16 @@ fun LibraryScreen(
             else -> {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 250.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(playlistVideos, key = { it.id }) { v ->
+                    itemsIndexed(
+                        items = playlistVideos,
+                        key = { idx, v -> "pl_${v.id}_$idx" },
+                        contentType = { _, _ -> "video_card" }
+                    ) { _, v ->
                         VideoCard(
                             video = v,
                             progress = playlistProgress[v.id],

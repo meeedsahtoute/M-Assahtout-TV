@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -30,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -37,6 +37,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
@@ -51,10 +52,20 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.streamtube.tv.core.ProgressEntryDto
 import com.streamtube.tv.core.VideoItemDto
+
+private val CardShape = RoundedCornerShape(12.dp)
+private val ThumbShape = RoundedCornerShape(10.dp)
+private val BadgeShape = RoundedCornerShape(4.dp)
+private val ButtonShape = RoundedCornerShape(8.dp)
+private val CardFocusBorder = Border(BorderStroke(2.dp, Color.White))
+private val CardUnfocusedBorder = Border(BorderStroke(2.dp, Color.Transparent))
+private val CardScale = 1.04f
 
 fun formatDurationSecs(secs: Long): String {
     val s = secs.coerceAtLeast(0L)
@@ -71,6 +82,43 @@ fun formatCompactCount(n: Long): String = when {
     else -> n.toString()
 }
 
+/**
+ * YouTube desktop-style horizontal category / filter chip (#272727 / #F1F1F1 active).
+ */
+@Composable
+fun TvChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = ClickableSurfaceDefaults.shape(ButtonShape),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (selected) StColors.ChipActiveBg else StColors.Chip,
+            focusedContainerColor = if (selected) Color.White else StColors.Hover,
+            contentColor = if (selected) StColors.ChipActiveFg else StColors.TextPrimary,
+            focusedContentColor = if (selected) Color.Black else Color.White
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = CardUnfocusedBorder,
+            focusedBorder = CardFocusBorder
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = CardScale)
+    ) {
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+        )
+    }
+}
+
 @Composable
 fun TvButton(
     label: String,
@@ -82,18 +130,18 @@ fun TvButton(
     Surface(
         onClick = onClick,
         modifier = modifier,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+        shape = ClickableSurfaceDefaults.shape(ButtonShape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) accent else StColors.SurfaceElevated,
-            focusedContainerColor = if (selected) accent else StColors.SurfaceFocus,
+            containerColor = if (selected) accent else StColors.Chip,
+            focusedContainerColor = if (selected) accent else StColors.Hover,
             contentColor = StColors.TextPrimary,
             focusedContentColor = Color.White
         ),
         border = ClickableSurfaceDefaults.border(
-            border = Border(BorderStroke(1.dp, if (selected) accent else StColors.Border)),
-            focusedBorder = Border(BorderStroke(2.dp, Color.White))
+            border = CardUnfocusedBorder,
+            focusedBorder = CardFocusBorder
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f)
+        scale = ClickableSurfaceDefaults.scale(focusedScale = CardScale)
     ) {
         Text(
             text = label,
@@ -148,7 +196,7 @@ fun TvTextField(
             focusedContainerColor = StColors.SurfaceElevated,
             unfocusedContainerColor = StColors.Surface
         ),
-        shape = RoundedCornerShape(10.dp),
+        shape = ButtonShape,
         modifier = modifier.onPreviewKeyEvent { ev ->
             if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             when (ev.key) {
@@ -188,6 +236,10 @@ fun TvTextField(
     )
 }
 
+/**
+ * Flat, zero-overdraw 16:9 YouTube desktop/TV card with strictly downsampled
+ * HARDWARE / RGB_565 bitmap decoding and GPU-only 1.04x focus scale.
+ */
 @Composable
 fun VideoCard(
     video: VideoItemDto,
@@ -195,49 +247,86 @@ fun VideoCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val accent = MaterialTheme.colorScheme.primary
     val resumeFraction = remember(progress) {
         if (progress != null && progress.duration > 0.0) {
             (progress.progress / progress.duration).toFloat().coerceIn(0f, 1f)
         } else 0f
     }
+    val thumbUrl = video.compactThumbnail?.takeIf { it.isNotBlank() } ?: video.thumbnail
+    val thumbReq = remember(thumbUrl) {
+        ImageRequest.Builder(context)
+            .data(thumbUrl)
+            .size(480, 270)
+            .precision(Precision.INEXACT)
+            .allowHardware(true)
+            .allowRgb565(true)
+            .crossfade(false)
+            .build()
+    }
+    val avatarUrl = video.channelAvatar?.takeIf { it.isNotBlank() }
+    val avatarReq = remember(avatarUrl) {
+        avatarUrl?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(96, 96)
+                .precision(Precision.INEXACT)
+                .allowHardware(true)
+                .allowRgb565(true)
+                .crossfade(false)
+                .build()
+        }
+    }
+    val metaText = remember(video.channelName, video.viewsText, video.publishedText) {
+        listOfNotNull(
+            video.channelName.takeIf { it.isNotBlank() },
+            video.viewsText?.takeIf { it.isNotBlank() },
+            video.publishedText?.takeIf { it.isNotBlank() }
+        ).joinToString(" • ")
+    }
 
     Surface(
         onClick = onClick,
         modifier = modifier,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        shape = ClickableSurfaceDefaults.shape(CardShape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = StColors.Surface,
-            focusedContainerColor = StColors.SurfaceElevated,
+            containerColor = Color.Transparent,
+            focusedContainerColor = StColors.Surface,
             contentColor = StColors.TextPrimary,
             focusedContentColor = Color.White
         ),
         border = ClickableSurfaceDefaults.border(
-            border = Border(BorderStroke(1.dp, Color.Transparent)),
-            focusedBorder = Border(BorderStroke(2.5.dp, Color.White))
+            border = CardUnfocusedBorder,
+            focusedBorder = CardFocusBorder
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f)
+        scale = ClickableSurfaceDefaults.scale(focusedScale = CardScale)
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(5.dp)
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-                    .background(Color(0xFF1A1A22))
+                    .clip(ThumbShape)
+                    .background(StColors.Surface)
             ) {
                 AsyncImage(
-                    model = video.thumbnail,
+                    model = thumbReq,
                     contentDescription = video.title,
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
                 if (video.isLive) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(8.dp)
-                            .background(Color(0xFFDC2626), RoundedCornerShape(4.dp))
+                            .padding(6.dp)
+                            .background(StColors.LiveRed, BadgeShape)
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text("LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -246,43 +335,44 @@ fun VideoCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(8.dp)
-                            .background(Color.Black.copy(alpha = 0.82f), RoundedCornerShape(4.dp))
+                            .padding(6.dp)
+                            .background(Color(0xCC000000), BadgeShape)
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
-                        Text(video.durationText, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text(video.durationText, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                if (resumeFraction > 0.02f) {
+                if (resumeFraction > 0.01f) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .fillMaxWidth()
-                            .height(3.5.dp)
-                            .background(Color.White.copy(alpha = 0.25f))
+                            .height(4.dp)
+                            .background(Color(0x99999999))
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth(resumeFraction)
-                                .height(3.5.dp)
+                                .height(4.dp)
                                 .background(accent)
                         )
                     }
                 }
             }
 
+            Spacer(Modifier.height(10.dp))
+
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.Top
             ) {
-                if (!video.channelAvatar.isNullOrBlank()) {
+                if (avatarReq != null) {
                     AsyncImage(
-                        model = video.channelAvatar,
+                        model = avatarReq,
                         contentDescription = video.channelName,
                         contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
                         modifier = Modifier
                             .size(32.dp)
                             .clip(CircleShape)
@@ -294,22 +384,17 @@ fun VideoCard(
                         text = video.title.ifBlank { video.id },
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        lineHeight = 18.sp,
+                        lineHeight = 19.sp,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         color = StColors.TextPrimary
                     )
-                    Spacer(Modifier.height(4.dp))
-                    val meta = listOfNotNull(
-                        video.channelName.takeIf { it.isNotBlank() },
-                        video.viewsText,
-                        video.publishedText
-                    ).joinToString(" • ")
-                    if (meta.isNotBlank()) {
+                    if (metaText.isNotBlank()) {
+                        Spacer(Modifier.height(3.dp))
                         Text(
-                            text = meta,
+                            text = metaText,
                             fontSize = 12.sp,
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = StColors.TextSecondary
                         )
@@ -325,7 +410,9 @@ fun LoadingPane(message: String = "Loading…") {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-            Text(message, color = StColors.TextSecondary, fontSize = 14.sp)
+            if (message.isNotEmpty()) {
+                Text(message, color = StColors.TextSecondary, fontSize = 14.sp)
+            }
         }
     }
 }
@@ -348,7 +435,7 @@ fun ErrorPane(message: String, onRetry: (() -> Unit)? = null) {
 
 @Composable
 fun QrCodeImage(content: String, size: Dp = 180.dp, modifier: Modifier = Modifier) {
-    val bitmap = remember(content) { generateQrBitmap(content, 512) }
+    val bitmap = remember(content) { generateQrBitmap(content, 384) }
     if (bitmap != null) {
         Image(
             bitmap = bitmap.asImageBitmap(),

@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -28,10 +28,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +47,8 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.streamtube.tv.core.NativeBridge
 import com.streamtube.tv.core.ProgressEntryDto
 import com.streamtube.tv.core.RawItemDto
@@ -53,11 +61,15 @@ import com.streamtube.tv.ui.TvButton
 import com.streamtube.tv.ui.VideoCard
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun SubscriptionsScreen(
+    contentFocusRequester: FocusRequester,
+    railFocusRequester: FocusRequester,
     onPlayVideo: (VideoItemDto) -> Unit,
     onOpenChannel: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var subs by remember { mutableStateOf<List<SubscriptionDto>>(emptyList()) }
     var items by remember { mutableStateOf<List<RawItemDto>>(emptyList()) }
@@ -92,7 +104,6 @@ fun SubscriptionsScreen(
             }
             loading = false
         } else {
-            // Fall back to signed-in subscriptions if TV account is connected
             NativeBridge.getHomeFeed("subscriptions").onSuccess { res ->
                 items = res.items
                 progress = res.progress
@@ -113,42 +124,67 @@ fun SubscriptionsScreen(
             TvButton(
                 label = if (refreshing) "Refreshing…" else "Refresh All",
                 onClick = { if (!refreshing) refreshFeed() },
-                selected = refreshing
+                selected = refreshing,
+                modifier = Modifier
+                    .then(if (subs.isEmpty()) Modifier.focusRequester(contentFocusRequester) else Modifier)
+                    .focusProperties { left = railFocusRequester }
             )
         }
 
         if (subs.isNotEmpty()) {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                items(subs, key = { it.channelId }) { sub ->
+                itemsIndexed(
+                    items = subs,
+                    key = { _, sub -> sub.channelId },
+                    contentType = { _, _ -> "sub_channel" }
+                ) { idx, sub ->
+                    val avatarReq = remember(sub.avatar) {
+                        ImageRequest.Builder(context)
+                            .data(sub.avatar)
+                            .size(96, 96)
+                            .precision(Precision.INEXACT)
+                            .allowHardware(true)
+                            .allowRgb565(true)
+                            .crossfade(false)
+                            .build()
+                    }
                     Surface(
                         onClick = { onOpenChannel(sub.channelId) },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+                        modifier = if (idx == 0) {
+                            Modifier
+                                .focusRequester(contentFocusRequester)
+                                .focusProperties { left = railFocusRequester }
+                        } else {
+                            Modifier
+                        },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                         colors = ClickableSurfaceDefaults.colors(
                             containerColor = StColors.Surface,
-                            focusedContainerColor = StColors.SurfaceFocus
+                            focusedContainerColor = StColors.Hover
                         ),
                         border = ClickableSurfaceDefaults.border(
-                            border = Border(BorderStroke(1.dp, StColors.Border)),
+                            border = Border(BorderStroke(2.dp, Color.Transparent)),
                             focusedBorder = Border(BorderStroke(2.dp, Color.White))
                         ),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f)
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f)
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .width(92.dp)
+                                .width(88.dp)
                                 .padding(10.dp)
                         ) {
                             AsyncImage(
-                                model = sub.avatar,
+                                model = avatarReq,
                                 contentDescription = sub.name,
                                 contentScale = ContentScale.Crop,
+                                filterQuality = FilterQuality.Low,
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(46.dp)
                                     .clip(CircleShape)
                                     .background(StColors.SurfaceElevated)
                             )
@@ -164,7 +200,7 @@ fun SubscriptionsScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
         }
 
         when {
@@ -176,12 +212,16 @@ fun SubscriptionsScreen(
             else -> {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 250.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(items) { item ->
+                    itemsIndexed(
+                        items = items,
+                        key = { idx, item -> "subv_${item.Video?.id ?: idx}_$idx" },
+                        contentType = { _, _ -> "video_card" }
+                    ) { _, item ->
                         item.Video?.let { v ->
                             VideoCard(
                                 video = v,

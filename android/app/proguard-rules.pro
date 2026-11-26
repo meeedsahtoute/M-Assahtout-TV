@@ -53,3 +53,12 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
 -dontwarn java.lang.instrument.**
+-dontwarn org.codehaus.mojo.animal_sniffer.**
+
+# ── Strip debug/verbose/info logs in release builds ──────────────────────────
+-assumenosideeffects class android.util.Log {
+    public static boolean isLoggable(java.lang.String, int);
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

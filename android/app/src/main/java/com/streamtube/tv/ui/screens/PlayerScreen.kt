@@ -1,19 +1,19 @@
 package com.streamtube.tv.ui.screens
 
+import android.app.Activity
 import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -60,6 +63,9 @@ import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
+import com.streamtube.tv.R
 import com.streamtube.tv.core.ChatMessageDto
 import com.streamtube.tv.core.CommentDto
 import com.streamtube.tv.core.NativeBridge
@@ -71,9 +77,11 @@ import com.streamtube.tv.ui.ErrorPane
 import com.streamtube.tv.ui.LoadingPane
 import com.streamtube.tv.ui.StColors
 import com.streamtube.tv.ui.TvButton
+import com.streamtube.tv.ui.TvChip
 import com.streamtube.tv.ui.VideoCard
 import com.streamtube.tv.ui.formatCompactCount
 import com.streamtube.tv.ui.formatDurationSecs
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -108,7 +116,9 @@ fun PlayerScreen(
     var hudVisible by remember { mutableStateOf(true) }
     var drawerOpen by remember { mutableStateOf(false) }
     var drawerTab by remember { mutableStateOf(DrawerTab.CONTROLS) }
-    var lastInteraction by remember { mutableStateOf(System.currentTimeMillis()) }
+    var lastInteraction by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var previewSeekMs by remember { mutableStateOf<Long?>(null) }
+    var scrubCommitJob by remember { mutableStateOf<Job?>(null) }
 
     var isSubscribed by remember { mutableStateOf(false) }
     var rating by remember { mutableIntStateOf(0) }
@@ -129,6 +139,50 @@ fun PlayerScreen(
     fun touchHud() {
         hudVisible = true
         lastInteraction = System.currentTimeMillis()
+    }
+
+    fun playNextVideo() {
+        val next = bundle?.watch?.playlist?.items?.let { pl ->
+            val idx = pl.indexOfFirst { it.id == currentVideo.id }
+            if (idx >= 0 && idx + 1 < pl.size) pl[idx + 1] else null
+        } ?: bundle?.watch?.related?.firstNotNullOfOrNull { it.Video }
+        if (next != null) {
+            scope.launch {
+                controller.stopAndSave()
+                currentVideo = next
+            }
+        }
+    }
+
+    fun scrubBy(deltaMs: Long, repeatCount: Int) {
+        val dur = pState.durationMs.coerceAtLeast(0L)
+        if (dur <= 0L) return
+        val mult = when {
+            repeatCount >= 16 -> 6L
+            repeatCount >= 6 -> 3L
+            else -> 1L
+        }
+        val base = previewSeekMs ?: pState.positionMs
+        val target = (base + deltaMs * mult).coerceIn(0L, dur)
+        previewSeekMs = target
+        touchHud()
+        scrubCommitJob?.cancel()
+        scrubCommitJob = scope.launch {
+            delay(140)
+            controller.seekToMs(target)
+            previewSeekMs = null
+        }
+    }
+
+    val activity = context as? Activity
+    DisposableEffect(activity, pState.isPlaying, pState.isBuffering) {
+        val win = activity?.window
+        if (win != null && (pState.isPlaying || pState.isBuffering)) {
+            win.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            win?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     fun exitPlayer() {
@@ -319,14 +373,31 @@ fun PlayerScreen(
                         touchHud()
                         true
                     }
-                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                        controller.seekBy(-(settings.seekStep * 1000.0).toLong())
+                    KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                        controller.player.playWhenReady = true
                         touchHud()
                         true
                     }
-                    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                        controller.seekBy((settings.seekStep * 1000.0).toLong())
+                    KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                        controller.player.playWhenReady = false
                         touchHud()
+                        true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                        playNextVideo()
+                        true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                        controller.seekToMs(0L)
+                        touchHud()
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                        scrubBy(-(settings.seekStep * 1000.0).toLong(), ev.nativeKeyEvent.repeatCount)
+                        true
+                    }
+                    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                        scrubBy((settings.seekStep * 1000.0).toLong(), ev.nativeKeyEvent.repeatCount)
                         true
                     }
                     KeyEvent.KEYCODE_DPAD_DOWN -> {
@@ -379,15 +450,14 @@ fun PlayerScreen(
                 } else {
                     AndroidView(
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                useController = false
+                            (LayoutInflater.from(ctx).inflate(R.layout.exo_surface_view, null, false) as PlayerView).apply {
                                 resizeMode = pState.resizeMode
                                 player = controller.player
                             }
                         },
                         update = { pv ->
-                            pv.player = controller.player
-                            pv.resizeMode = pState.resizeMode
+                            if (pv.player !== controller.player) pv.player = controller.player
+                            if (pv.resizeMode != pState.resizeMode) pv.resizeMode = pState.resizeMode
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -507,9 +577,10 @@ fun PlayerScreen(
                                 .padding(horizontal = 28.dp, vertical = 18.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // Seekbar with SponsorBlock markers
+                            // Seekbar with SponsorBlock markers + live scrub preview
                             val durMs = pState.durationMs.coerceAtLeast(1L)
-                            val frac = (pState.positionMs.toFloat() / durMs.toFloat()).coerceIn(0f, 1f)
+                            val displayPosMs = previewSeekMs ?: pState.positionMs
+                            val frac = (displayPosMs.toFloat() / durMs.toFloat()).coerceIn(0f, 1f)
                             val bufFrac = (pState.bufferedMs.toFloat() / durMs.toFloat()).coerceIn(0f, 1f)
 
                             Row(
@@ -517,9 +588,14 @@ fun PlayerScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val timeText = when {
+                                    currentVideo.isLive -> "LIVE"
+                                    previewSeekMs != null -> "${formatDurationSecs(displayPosMs / 1000)} / ${formatDurationSecs(pState.durationMs / 1000)}  (Seek)"
+                                    else -> "${formatDurationSecs(displayPosMs / 1000)} / ${formatDurationSecs(pState.durationMs / 1000)}"
+                                }
                                 Text(
-                                    text = if (currentVideo.isLive) "LIVE" else "${formatDurationSecs(pState.positionMs / 1000)} / ${formatDurationSecs(pState.durationMs / 1000)}",
-                                    color = Color.White,
+                                    text = timeText,
+                                    color = if (previewSeekMs != null) accent else Color.White,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -612,8 +688,8 @@ fun PlayerScreen(
                                         if (!settings.hideComments && b?.watch?.commentsToken != null) add(DrawerTab.COMMENTS)
                                         if (b?.watch?.liveChat != null) add(DrawerTab.CHAT)
                                     }
-                                    items(tabs) { tab ->
-                                        TvButton(
+                                    items(tabs, key = { it.name }) { tab ->
+                                        TvChip(
                                             label = tab.label,
                                             selected = drawerTab == tab,
                                             onClick = { drawerTab = tab },

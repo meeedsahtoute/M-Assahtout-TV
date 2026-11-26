@@ -1,6 +1,9 @@
 package com.streamtube.tv.ui.screens
 
+import android.app.Activity
 import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +41,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Text
+import com.streamtube.tv.R
 import com.streamtube.tv.core.NativeBridge
 import com.streamtube.tv.core.SettingsDto
 import com.streamtube.tv.core.VideoItemDto
@@ -116,6 +120,17 @@ fun ShortsScreen(
         }
     }
 
+    val activity = context as? Activity
+    DisposableEffect(activity, pState.isPlaying) {
+        val win = activity?.window
+        if (win != null && pState.isPlaying) {
+            win.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            win?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             scope.launch { controller.stopAndSave() }
@@ -165,13 +180,14 @@ fun ShortsScreen(
                 ) {
                     AndroidView(
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                useController = false
+                            (LayoutInflater.from(ctx).inflate(R.layout.exo_surface_view, null, false) as PlayerView).apply {
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                                 player = controller.player
                             }
                         },
-                        update = { pv -> pv.player = controller.player },
+                        update = { pv ->
+                            if (pv.player !== controller.player) pv.player = controller.player
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                     if (!pState.isPlaying && !pState.isBuffering) {

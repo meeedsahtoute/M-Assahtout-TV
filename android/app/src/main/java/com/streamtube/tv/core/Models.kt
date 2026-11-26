@@ -1,9 +1,11 @@
 package com.streamtube.tv.core
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
+@Immutable
 @Serializable
 data class Envelope<T>(
     val ok: Boolean,
@@ -11,6 +13,7 @@ data class Envelope<T>(
     val error: String? = null
 )
 
+@Immutable
 @Serializable
 data class SettingsDto(
     val theme: String = "dark",
@@ -107,18 +110,21 @@ data class SettingsDto(
     @SerialName("always_scrollbars") val alwaysScrollbars: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class InitInfoDto(
     @SerialName("core_version") val coreVersion: String,
     val settings: SettingsDto
 )
 
+@Immutable
 @Serializable
 data class ExploreCategoryDto(
     val name: String,
     @SerialName("channel_id") val channelId: String
 )
 
+@Immutable
 @Serializable
 data class VideoItemDto(
     val id: String = "",
@@ -139,6 +145,7 @@ data class VideoItemDto(
     @SerialName("is_upcoming") val isUpcoming: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class ChannelItemDto(
     val id: String = "",
@@ -150,6 +157,7 @@ data class ChannelItemDto(
     val description: String? = null
 )
 
+@Immutable
 @Serializable
 data class PlaylistItemDto(
     val id: String = "",
@@ -161,6 +169,7 @@ data class PlaylistItemDto(
     @SerialName("first_video_id") val firstVideoId: String? = null
 )
 
+@Immutable
 @Serializable
 data class RawItemDto(
     val Video: VideoItemDto? = null,
@@ -168,12 +177,14 @@ data class RawItemDto(
     val Playlist: PlaylistItemDto? = null
 )
 
+@Immutable
 @Serializable
 data class ProgressEntryDto(
     val progress: Double = 0.0,
     val duration: Double = 0.0
 )
 
+@Immutable
 @Serializable
 data class FeedResponseDto(
     val items: List<RawItemDto> = emptyList(),
@@ -181,6 +192,7 @@ data class FeedResponseDto(
     val progress: Map<String, ProgressEntryDto> = emptyMap()
 )
 
+@Immutable
 @Serializable
 data class SearchFilterDto(
     val sort: Int = 0,
@@ -195,6 +207,7 @@ data class SearchFilterDto(
     val hdr: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class ChapterDto(
     val title: String = "",
@@ -202,6 +215,7 @@ data class ChapterDto(
     val thumbnail: String? = null
 )
 
+@Immutable
 @Serializable
 data class WatchPlaylistDto(
     val id: String = "",
@@ -209,6 +223,7 @@ data class WatchPlaylistDto(
     val items: List<VideoItemDto> = emptyList()
 )
 
+@Immutable
 @Serializable
 data class WatchInfoDto(
     val id: String = "",
@@ -230,6 +245,7 @@ data class WatchInfoDto(
     val playlist: WatchPlaylistDto? = null
 )
 
+@Immutable
 @Serializable
 data class StreamFormatDto(
     val itag: Int = 0,
@@ -248,6 +264,7 @@ data class StreamFormatDto(
     @SerialName("is_muxed") val isMuxed: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class CaptionTrackDto(
     val lang: String = "",
@@ -256,6 +273,7 @@ data class CaptionTrackDto(
     val auto: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class StoryboardDto(
     @SerialName("url_template") val urlTemplate: String = "",
@@ -267,6 +285,7 @@ data class StoryboardDto(
     @SerialName("interval_ms") val intervalMs: Int = 0
 )
 
+@Immutable
 @Serializable
 data class StreamInfoDto(
     val id: String = "",
@@ -289,6 +308,7 @@ data class StreamInfoDto(
     @SerialName("hls_only") val hlsOnly: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class PlaybackPlanDto(
     val mode: String = "none",
@@ -307,6 +327,7 @@ data class PlaybackPlanDto(
     val captions: List<CaptionTrackDto> = emptyList()
 )
 
+@Immutable
 @Serializable
 data class SegmentDto(
     val category: String = "",
@@ -319,12 +340,14 @@ data class SegmentDto(
     val uuid: String = ""
 )
 
+@Immutable
 @Serializable
 data class BrandingDto(
     val title: String? = null,
     @SerialName("thumbnail_time") val thumbnailTime: Double? = null
 )
 
+@Immutable
 @Serializable
 data class VotesDto(
     val likes: Long = 0,
@@ -333,6 +356,7 @@ data class VotesDto(
     val rating: Double = 0.0
 )
 
+@Immutable
 @Serializable
 data class WatchBundleDto(
     val watch: WatchInfoDto,
@@ -350,6 +374,7 @@ data class WatchBundleDto(
     @SerialName("in_favorites") val inFavorites: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class CommentDto(
     val id: String = "",
@@ -369,6 +394,7 @@ data class CommentDto(
     val image: List<JsonElement>? = null
 )
 
+@Immutable
 @Serializable
 data class CommentPageDto(
     val comments: List<CommentDto> = emptyList(),
@@ -378,6 +404,7 @@ data class CommentPageDto(
     @SerialName("sort_new_token") val sortNewToken: String? = null
 )
 
+@Immutable
 @Serializable
 data class ChatMessageDto(
     val id: String = "",
@@ -389,6 +416,7 @@ data class ChatMessageDto(
     val paid: String? = null
 )
 
+@Immutable
 @Serializable
 data class ChatBatchDto(
     val messages: List<ChatMessageDto> = emptyList(),
@@ -396,6 +424,7 @@ data class ChatBatchDto(
     @SerialName("timeout_ms") val timeoutMs: Long = 5000
 )
 
+@Immutable
 @Serializable
 data class ChannelTabDto(
     val title: String = "",
@@ -404,12 +433,14 @@ data class ChannelTabDto(
     val selected: Boolean = false
 )
 
+@Immutable
 @Serializable
 data class PageDto(
     val items: List<RawItemDto> = emptyList(),
     val continuation: String? = null
 )
 
+@Immutable
 @Serializable
 data class ChannelPageDto(
     val info: ChannelItemDto = ChannelItemDto(),
@@ -418,6 +449,7 @@ data class ChannelPageDto(
     val page: PageDto = PageDto()
 )
 
+@Immutable
 @Serializable
 data class ChannelResponseDto(
     val channel: ChannelPageDto,
@@ -425,6 +457,7 @@ data class ChannelResponseDto(
     val progress: Map<String, ProgressEntryDto> = emptyMap()
 )
 
+@Immutable
 @Serializable
 data class PlaylistPageDto(
     val info: PlaylistItemDto = PlaylistItemDto(),
@@ -433,12 +466,14 @@ data class PlaylistPageDto(
     val continuation: String? = null
 )
 
+@Immutable
 @Serializable
 data class PlaylistResponseDto(
     val playlist: PlaylistPageDto,
     val progress: Map<String, ProgressEntryDto> = emptyMap()
 )
 
+@Immutable
 @Serializable
 data class SubscriptionDto(
     @SerialName("channel_id") val channelId: String = "",
@@ -446,6 +481,7 @@ data class SubscriptionDto(
     val avatar: String? = null
 )
 
+@Immutable
 @Serializable
 data class HistoryEntryDto(
     val video: VideoItemDto,
@@ -454,6 +490,7 @@ data class HistoryEntryDto(
     val duration: Double = 0.0
 )
 
+@Immutable
 @Serializable
 data class LocalPlaylistDto(
     val id: Long = 0,
@@ -463,6 +500,7 @@ data class LocalPlaylistDto(
     val thumbnail: String? = null
 )
 
+@Immutable
 @Serializable
 data class AccountDto(
     val name: String = "",
@@ -470,6 +508,7 @@ data class AccountDto(
     val avatar: String? = null
 )
 
+@Immutable
 @Serializable
 data class AuthStatusDto(
     @SerialName("tv_signed_in") val tvSignedIn: Boolean = false,
@@ -478,6 +517,7 @@ data class AuthStatusDto(
     @SerialName("web_account_name") val webAccountName: String? = null
 )
 
+@Immutable
 @Serializable
 data class DeviceCodeDto(
     @SerialName("device_code") val deviceCode: String = "",
@@ -487,12 +527,14 @@ data class DeviceCodeDto(
     @SerialName("expires_in") val expiresIn: Long = 1800
 )
 
+@Immutable
 @Serializable
 data class PollResultDto(
     val status: String = "pending",
     val account: AccountDto? = null
 )
 
+@Immutable
 @Serializable
 data class SyncAccountResultDto(
     @SerialName("subscriptions_added") val subscriptionsAdded: Int = 0,
@@ -500,6 +542,7 @@ data class SyncAccountResultDto(
     @SerialName("searches_added") val searchesAdded: Int = 0
 )
 
+@Immutable
 @Serializable
 data class ImportReportDto(
     val subscriptions: Int = 0,
@@ -508,12 +551,14 @@ data class ImportReportDto(
     @SerialName("playlist_videos") val playlistVideos: Int = 0
 )
 
+@Immutable
 @Serializable
 data class ResolvedUrlDto(
     val kind: String = "",
     val id: String = ""
 )
 
+@Immutable
 @Serializable
 data class UpdateCheckDto(
     @SerialName("has_update") val hasUpdate: Boolean = false,

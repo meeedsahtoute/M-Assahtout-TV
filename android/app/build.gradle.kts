@@ -24,6 +24,8 @@ android {
         versionCode = 75
         versionName = "0.7.5-alpha"
 
+        resourceConfigurations += listOf("en", "ar", "fr", "es")
+
         ndk {
             // arm64-v8a  → Chromecast with Google TV 4K, Google TV Streamer 4K,
             //              NVIDIA Shield, most 2022+ TV boxes
@@ -94,7 +96,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/*.version"
             excludes += "/*.proto"
+            excludes += "DebugProbesKt.bin"
         }
         // Merge native .so files from both ABI directories cleanly
         jniLibs {
@@ -113,23 +117,21 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
 
     // Jetpack Compose for TV
     implementation("androidx.tv:tv-material:1.0.0")
 
-    // Media3 / ExoPlayer — MergingMediaSource for separate video+audio adaptive streams
+    // Media3 / ExoPlayer — Hardware SurfaceView + OkHttp HTTP/2 pooled DataSource
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
-    implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
-    // Image loading (thumbnails, DeArrow custom thumbs)
+    // Image loading (downsampled HARDWARE/RGB_565 thumbnails, DeArrow custom thumbs)
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     // JSON serialization (models DTO ↔ Kotlin)

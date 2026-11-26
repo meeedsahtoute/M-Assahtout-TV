@@ -97,12 +97,12 @@ fun PlaylistScreen(
                 val vids = page!!.videos
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 250.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(vids, key = { it.id }) { v ->
+                    items(vids, key = { it.id }, contentType = { "video_card" }) { v ->
                         VideoCard(
                             video = v,
                             progress = progress[v.id],

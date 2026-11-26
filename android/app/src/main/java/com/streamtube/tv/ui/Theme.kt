@@ -5,15 +5,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 
+/**
+ * Exact 1:1 visual token palette mirroring the desktop GPUI dark cinema theme (src/ui/mod.rs).
+ */
 object StColors {
-    val Background = Color(0xFF0A0A0D)
-    val Surface = Color(0xFF14141A)
-    val SurfaceElevated = Color(0xFF1E1E27)
-    val SurfaceFocus = Color(0xFF282834)
-    val Border = Color(0xFF2C2C3A)
-    val TextPrimary = Color(0xFFF5F5F7)
-    val TextSecondary = Color(0xFFA0A3B1)
-    val TextMuted = Color(0xFF6B6E7D)
+    val Background = Color(0xFF0F0F0F)
+    val Surface = Color(0xFF181818)
+    val SurfaceElevated = Color(0xFF212121)
+    val SurfaceFocus = Color(0xFF282828)
+    val Hover = Color(0xFF3A3A3A)
+    val Border = Color(0xFF303030)
+    val Chip = Color(0xFF272727)
+    val ChipActiveBg = Color(0xFFF1F1F1)
+    val ChipActiveFg = Color(0xFF0F0F0F)
+    val TextPrimary = Color(0xFFF1F1F1)
+    val TextSecondary = Color(0xFFAAAAAA)
+    val TextMuted = Color(0xFF717171)
+    val LinkBlue = Color(0xFF3EA6FF)
+    val LiveRed = Color(0xFFCC0000)
     val Success = Color(0xFF22C55E)
     val Warning = Color(0xFFF59E0B)
     val Error = Color(0xFFEF4444)

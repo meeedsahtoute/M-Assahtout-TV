@@ -13,7 +13,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
@@ -23,6 +23,7 @@ import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.streamtube.tv.core.AppRuntime
 import com.streamtube.tv.core.NativeBridge
 import com.streamtube.tv.core.PlaybackPlanDto
 import com.streamtube.tv.core.SegmentDto
@@ -76,11 +77,8 @@ class ExoPlayerController(context: Context) {
     val player: ExoPlayer = ExoPlayerHolder.getOrCreate(appContext)
     private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
 
-    private val dataSourceFactory = DefaultHttpDataSource.Factory()
-        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
-        .setAllowCrossProtocolRedirects(true)
-        .setConnectTimeoutMs(15_000)
-        .setReadTimeoutMs(30_000)
+    private val dataSourceFactory = OkHttpDataSource.Factory(AppRuntime.okHttpClient(appContext))
+        .setUserAgent(ExoPlayerHolder.USER_AGENT)
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -192,6 +190,10 @@ class ExoPlayerController(context: Context) {
         }
 
         player.repeatMode = if (settings.loopVideo) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, audioOnly)
+            .build()
         player.playbackParameters = PlaybackParameters(initialSpeed)
         player.setMediaSource(mediaSource)
         if (resumeSecs > 1.0) {
