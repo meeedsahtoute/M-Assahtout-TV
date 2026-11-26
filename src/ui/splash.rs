@@ -323,7 +323,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
 
     // 24 Slow-Drifting PS5-Style Bokeh Light Motes (0ms - 3200ms)
     let t_sec = elapsed_ms / 1000.0;
-    let bokeh_global = (elapsed_ms / 320.0).clamp(0.0, 1.0) * (1.0 - dive_curve * 1.15).clamp(0.0, 1.0);
+    let bokeh_global = (0.18 + 0.82 * (elapsed_ms / 320.0)).clamp(0.0, 1.0) * (1.0 - dive_curve * 1.15).clamp(0.0, 1.0);
     if bokeh_global > 0.01 {
         for m in &POOL.bokeh {
             let bx = (m.norm_x + m.vel_x * t_sec) * vw;
@@ -362,11 +362,11 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
 
     // Phase 1 (0ms - 640ms): Optical Prism Slit + Vertical Volumetric Bloom
     if elapsed_ms < 640.0 {
-        let open_ease = silk_ease(((elapsed_ms - 20.0) / 360.0).clamp(0.0, 1.0));
+        let open_ease = silk_ease(((elapsed_ms + 30.0) / 380.0).clamp(0.0, 1.0));
         let slit_fade = if elapsed_ms > 360.0 {
             1.0 - silk_ease(((elapsed_ms - 360.0) / 260.0).clamp(0.0, 1.0))
         } else {
-            (elapsed_ms / 110.0).clamp(0.0, 1.0)
+            (0.35 + 0.65 * (elapsed_ms / 110.0)).clamp(0.0, 1.0)
         };
         let slit_w = (440.0 * ui_scale * open_ease).min(vw * 0.72);
         if slit_w > 2.0 && slit_fade > 0.01 {

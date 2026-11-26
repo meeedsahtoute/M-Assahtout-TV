@@ -11,28 +11,34 @@ mod updater;
 
 use gpui_kit::*;
 
-/// Window placement from the last session (size, position, maximized), or a
-/// centered default sized to the screen.
+/// Always open maximized on primary display bounds on startup.
 fn saved_window_bounds(cx: &App) -> WindowBounds {
-    if let Some(v) = store::kv_get("window").and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()) {
-        let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-        let (w, h) = (f("w"), f("h"));
-        if w >= 640.0 && h >= 400.0 {
-            let b = Bounds::new(point(px(f("x")), px(f("y"))), size(px(w), px(h)));
-            // ignore positions that are no longer on any display
-            let visible = cx.displays().iter().any(|d| d.bounds().intersects(&b));
-            if visible {
-                return if v.get("maximized").and_then(|m| m.as_bool()).unwrap_or(false) {
-                    WindowBounds::Maximized(b)
-                } else {
-                    WindowBounds::Windowed(b)
-                };
+    let display_bounds = cx
+        .primary_display()
+        .map(|d| d.bounds())
+        .unwrap_or_else(|| Bounds::centered(None, size(px(1600.), px(1000.)), cx));
+    WindowBounds::Maximized(display_bounds)
+}
+
+/// Force-maximize the newly opened window (guards against Windows custom-titlebar startup restore).
+fn ensure_window_maximized(window: &mut Window) {
+    if !window.is_maximized() {
+        window.zoom_window();
+    }
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn ShowWindowAsync(hwnd: isize, cmd: i32) -> i32;
+        }
+        if let Ok(h) = HasWindowHandle::window_handle(&*window) {
+            if let RawWindowHandle::Win32(w) = h.as_raw() {
+                const SW_SHOWMAXIMIZED: i32 = 3;
+                unsafe { ShowWindowAsync(w.hwnd.get(), SW_SHOWMAXIMIZED) };
             }
         }
     }
-    let display = cx.primary_display().map(|d| d.bounds().size).unwrap_or(size(px(1600.), px(1000.)));
-    let sz = size((display.width * 0.82).min(px(1600.)), (display.height * 0.85).min(px(1000.)));
-    WindowBounds::Windowed(Bounds::centered(None, sz, cx))
 }
 
 pub fn save_window_bounds(window: &Window) {
@@ -93,6 +99,7 @@ fn main() {
                 ..Default::default()
             };
             gpui_kit::open_window(opts, cx, |window, cx| {
+                ensure_window_maximized(window);
                 ui::apply_theme(Some(window), cx);
                 cx.new(|cx| ui::app::AppView::new(window, cx))
             })
