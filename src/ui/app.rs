@@ -566,6 +566,8 @@ pub struct AppView {
     subs_expanded: bool,
     /// downloads dropdown under the topbar button
     dl_panel: bool,
+    /// flagship 3.2s optical cinema startup splash overlay
+    pub(super) splash: Option<super::splash::SplashState>,
     _subs: Vec<Subscription>,
 }
 
@@ -722,7 +724,7 @@ impl AppView {
                 .detach();
             }
         }
-        Self {
+        let app = Self {
             tabs: vec![Tab { id: 1, route: start.clone(), page: None, history: Vec::new(), forward: Vec::new(), playback: None }],
             active_tab: 0,
             next_tab_id: 2,
@@ -757,7 +759,22 @@ impl AppView {
             subs_expanded: false,
             dl_panel: false,
             space_down: false,
+            splash: Some(super::splash::SplashState::start()),
             _subs: subs,
+        };
+        app.start_splash_loop(cx);
+        app
+    }
+
+    fn start_splash_loop(&self, cx: &mut Context<Self>) {
+        super::splash::spawn_splash_ticker(cx);
+    }
+
+    fn skip_splash(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.splash.take() {
+            s.stop_audio();
+            self.space_down = false;
+            cx.notify();
         }
     }
 
@@ -1864,9 +1881,15 @@ impl AppView {
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = shortcut_key(&ev.keystroke.key);
+        if self.splash.is_some() {
+            if matches!(k, "escape" | "space") {
+                self.skip_splash(cx);
+            }
+            return;
+        }
         let search_focused = self.search.read(cx).focus_handle(cx).is_focused(window);
         let dialog_focused = self.dialog_input.read(cx).focus_handle(cx).is_focused(window);
-        let k = shortcut_key(&ev.keystroke.key);
         let m = &ev.keystroke.modifiers;
         if k == "f5" || (m.control && k == "r" && !search_focused && !dialog_focused) {
             self.refresh(window, cx);
@@ -3274,6 +3297,12 @@ impl Render for AppView {
         }
         root = root.children(self.render_dl_panel(cx));
         root = root.children(self.render_menu(cx)).children(self.render_dialog(cx)).child(self.render_toasts(cx));
+        if self.splash.as_ref().is_some_and(|s| s.finished()) {
+            self.splash = None;
+        }
+        if let Some(ref splash) = self.splash {
+            root = root.child(deferred(super::splash::render_splash(splash, window)).with_priority(5));
+        }
         root
     }
 }

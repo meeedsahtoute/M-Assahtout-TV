@@ -237,6 +237,42 @@ pub fn available() -> bool {
     lib().is_ok()
 }
 
+/// Plays a standalone audio file (e.g. startup intro WAV) via runtime-loaded libmpv
+/// when available on non-Windows platforms.
+#[cfg(not(windows))]
+pub fn play_oneshot_wav(path: &std::path::Path, stop: Arc<AtomicBool>) {
+    let Ok((_, f)) = lib() else { return };
+    let Ok(path_c) = CString::new(path.to_string_lossy().as_bytes()) else { return };
+    unsafe {
+        let h = (f.create)();
+        if h.is_null() {
+            return;
+        }
+        for (k, v) in [("vo", "null"), ("vid", "no"), ("audio-client-name", "M. ASSAHTOUT TV")] {
+            if let (Ok(kc), Ok(vc)) = (CString::new(k), CString::new(v)) {
+                (f.set_option_string)(h, kc.as_ptr(), vc.as_ptr());
+            }
+        }
+        if (f.initialize)(h) >= 0 {
+            if let Ok(cmd) = CString::new("loadfile") {
+                let mut args = [cmd.as_ptr(), path_c.as_ptr(), std::ptr::null()];
+                if (f.command)(h, args.as_mut_ptr()) >= 0 {
+                    while !stop.load(Ordering::Relaxed) {
+                        let e = (f.wait_event)(h, 0.05);
+                        if !e.is_null() {
+                            let ev = &*e;
+                            if ev.event_id == EV_SHUTDOWN || ev.event_id == EV_END_FILE {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (f.terminate_destroy)(h);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum MpvEvent {
     FileLoaded,

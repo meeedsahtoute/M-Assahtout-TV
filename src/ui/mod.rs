@@ -5,6 +5,7 @@ pub mod image_cache;
 pub mod pages;
 pub mod pip;
 pub mod slot;
+pub mod splash;
 #[cfg(target_os = "linux")]
 mod topbar_drag;
 pub mod widgets;
