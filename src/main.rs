@@ -11,34 +11,13 @@ mod updater;
 
 use gpui_kit::*;
 
-/// Always open maximized on primary display bounds on startup.
+/// Always open in borderless fullscreen on primary display bounds on startup.
 fn saved_window_bounds(cx: &App) -> WindowBounds {
     let display_bounds = cx
         .primary_display()
         .map(|d| d.bounds())
         .unwrap_or_else(|| Bounds::centered(None, size(px(1600.), px(1000.)), cx));
-    WindowBounds::Maximized(display_bounds)
-}
-
-/// Force-maximize the newly opened window (guards against Windows custom-titlebar startup restore).
-fn ensure_window_maximized(window: &mut Window) {
-    if !window.is_maximized() {
-        window.zoom_window();
-    }
-    #[cfg(windows)]
-    {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        #[link(name = "user32")]
-        unsafe extern "system" {
-            fn ShowWindowAsync(hwnd: isize, cmd: i32) -> i32;
-        }
-        if let Ok(h) = HasWindowHandle::window_handle(&*window) {
-            if let RawWindowHandle::Win32(w) = h.as_raw() {
-                const SW_SHOWMAXIMIZED: i32 = 3;
-                unsafe { ShowWindowAsync(w.hwnd.get(), SW_SHOWMAXIMIZED) };
-            }
-        }
-    }
+    WindowBounds::Fullscreen(display_bounds)
 }
 
 pub fn save_window_bounds(window: &Window) {
@@ -98,12 +77,34 @@ fn main() {
                 window_min_size: Some(size(px(720.), px(480.))),
                 ..Default::default()
             };
-            gpui_kit::open_window(opts, cx, |window, cx| {
-                ensure_window_maximized(window);
+            let main_win = gpui_kit::open_window(opts, cx, |window, cx| {
                 ui::apply_theme(Some(window), cx);
                 cx.new(|cx| ui::app::AppView::new(window, cx))
             })
             .expect("failed to open window");
+            // Ensure Windows enters borderless fullscreen and hides the taskbar cleanly on launch.
+            let main_handle: AnyWindowHandle = main_win.into();
+            cx.spawn(async move |cx| {
+                for _ in 0..10 {
+                    cx.background_executor().timer(std::time::Duration::from_millis(20)).await;
+                    let done = main_handle
+                        .update(cx, |_, window, cx| {
+                            if !window.is_fullscreen() {
+                                window.toggle_fullscreen();
+                                false
+                            } else {
+                                ui::app::ensure_fullscreen_taskbar_hidden(window);
+                                cx.refresh_windows();
+                                true
+                            }
+                        })
+                        .unwrap_or(true);
+                    if done {
+                        break;
+                    }
+                }
+            })
+            .detach();
             perf::mark("window open");
             ui::app_icon::apply(cx);
             links::register_scheme();

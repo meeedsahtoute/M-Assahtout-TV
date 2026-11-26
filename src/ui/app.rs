@@ -56,6 +56,8 @@ pub struct UiState {
     pub shorts: bool,
     /// fullscreen layout inside the window, without OS fullscreen
     pub windowed: bool,
+    /// tracks whether entering video-player fullscreen also entered OS fullscreen
+    pub video_fs_entered_os: bool,
     pub sidebar_open: bool,
     pub content_width: Pixels,
     pub viewport: Size<Pixels>,
@@ -228,13 +230,31 @@ pub fn go_back_keep_playing(window: &mut Window, cx: &mut App) {
 }
 
 pub fn toggle_fullscreen(window: &mut Window, cx: &mut App) {
-    window.toggle_fullscreen();
+    let mut need_hide_taskbar = false;
     let ui = cx.global_mut::<UiState>();
     if ui.windowed {
         // windowed fullscreen -> real fullscreen, the layout stays the same
         ui.windowed = false;
+        if !window.is_fullscreen() {
+            ui.video_fs_entered_os = true;
+            window.toggle_fullscreen();
+            need_hide_taskbar = true;
+        }
+    } else if !ui.fullscreen {
+        ui.fullscreen = true;
+        if !window.is_fullscreen() {
+            ui.video_fs_entered_os = true;
+            window.toggle_fullscreen();
+            need_hide_taskbar = true;
+        }
     } else {
-        ui.fullscreen = !ui.fullscreen;
+        ui.fullscreen = false;
+        if std::mem::take(&mut ui.video_fs_entered_os) && window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
+    }
+    if need_hide_taskbar {
+        schedule_fullscreen_taskbar_hide(window, cx);
     }
     cx.refresh_windows();
 }
@@ -253,7 +273,9 @@ pub fn toggle_windowed_fullscreen(window: &mut Window, cx: &mut App) {
         ui.fullscreen = false;
     } else if ui.fullscreen {
         // real fullscreen -> windowed fullscreen
-        window.toggle_fullscreen();
+        if std::mem::take(&mut ui.video_fs_entered_os) && window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
         ui.windowed = true;
     } else {
         ui.fullscreen = true;
@@ -1882,6 +1904,11 @@ impl AppView {
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = shortcut_key(&ev.keystroke.key);
+        let m = &ev.keystroke.modifiers;
+        if k == "f11" && !m.control && !m.alt && !m.platform {
+            toggle_fullscreen_maximized(window, cx);
+            return;
+        }
         if self.splash.is_some() {
             if matches!(k, "escape" | "space") {
                 self.skip_splash(cx);
@@ -1890,7 +1917,6 @@ impl AppView {
         }
         let search_focused = self.search.read(cx).focus_handle(cx).is_focused(window);
         let dialog_focused = self.dialog_input.read(cx).focus_handle(cx).is_focused(window);
-        let m = &ev.keystroke.modifiers;
         if k == "f5" || (m.control && k == "r" && !search_focused && !dialog_focused) {
             self.refresh(window, cx);
             return;
@@ -2164,7 +2190,7 @@ impl AppView {
         let suggestions = if self.show_suggestions { self.all_suggestions() } else { Vec::new() };
         let hist: std::collections::HashSet<String> = self.history_suggestions.iter().cloned().collect();
         let sel = self.sel_suggestion;
-        let maximized = window.is_maximized();
+        let maximized = window.is_fullscreen();
         let bar = div()
             .id("topbar")
             .flex()
@@ -3307,6 +3333,134 @@ impl Render for AppView {
     }
 }
 
+#[cfg(windows)]
+fn show_window_cmd(window: &Window, cmd: i32) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn ShowWindowAsync(hwnd: isize, cmd: i32) -> i32;
+    }
+    if let Ok(h) = HasWindowHandle::window_handle(window) {
+        if let RawWindowHandle::Win32(w) = h.as_raw() {
+            unsafe { ShowWindowAsync(w.hwnd.get(), cmd) };
+        }
+    }
+}
+
+/// Ensures Windows removes the NonRudeHWND property and refreshes window z-order so
+/// a borderless fullscreen window covers the Windows Taskbar cleanly.
+pub fn ensure_fullscreen_taskbar_hidden(window: &Window) {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn RemovePropW(hwnd: isize, lp_string: *const u16) -> isize;
+            fn SetWindowPos(hwnd: isize, insert_after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        }
+        if let Ok(h) = HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(w) = h.as_raw() {
+                let hwnd = w.hwnd.get();
+                // "NonRudeHWND\0" in UTF-16
+                const NON_RUDE: [u16; 12] = [
+                    b'N' as u16, b'o' as u16, b'n' as u16, b'R' as u16, b'u' as u16, b'd' as u16,
+                    b'e' as u16, b'H' as u16, b'W' as u16, b'N' as u16, b'D' as u16, 0,
+                ];
+                const HWND_TOP: isize = 0;
+                const SWP_NOSIZE: u32 = 0x0001;
+                const SWP_NOMOVE: u32 = 0x0002;
+                const SWP_FRAMECHANGED: u32 = 0x0020;
+                const SWP_SHOWWINDOW: u32 = 0x0040;
+                unsafe {
+                    RemovePropW(hwnd, NON_RUDE.as_ptr());
+                    SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
+fn poll_main_window(cx: &mut App, mut step: impl FnMut(&mut Window, &mut App) -> bool + 'static) {
+    let pip = crate::ui::pip::handle(cx);
+    let Some(handle) = cx.windows().into_iter().find(|w| Some(*w) != pip) else { return };
+    cx.spawn(async move |cx| {
+        for _ in 0..12 {
+            cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
+            let done = handle
+                .update(cx, |_, window, cx| step(window, cx))
+                .unwrap_or(true);
+            if done {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
+fn schedule_fullscreen_taskbar_hide(window: &Window, cx: &mut App) {
+    #[cfg(windows)]
+    {
+        if window.is_fullscreen() {
+            ensure_fullscreen_taskbar_hidden(window);
+            cx.refresh_windows();
+            return;
+        }
+        poll_main_window(cx, |window, cx| {
+            if window.is_fullscreen() {
+                ensure_fullscreen_taskbar_hidden(window);
+                cx.refresh_windows();
+                true
+            } else {
+                false
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = (window, cx);
+}
+
+/// Maximizes a non-fullscreen window cleanly on Windows and Linux.
+pub fn ensure_window_maximized(window: &mut Window) {
+    if !window.is_maximized() {
+        window.zoom_window();
+        #[cfg(windows)]
+        {
+            const SW_SHOWMAXIMIZED: i32 = 3;
+            show_window_cmd(window, SW_SHOWMAXIMIZED);
+        }
+    }
+}
+
+/// Toggles the desktop window between borderless Fullscreen and Maximized modes.
+pub fn toggle_fullscreen_maximized(window: &mut Window, cx: &mut App) {
+    let leaving_fullscreen = window.is_fullscreen();
+    if cx.try_global::<UiState>().is_some() {
+        cx.global_mut::<UiState>().video_fs_entered_os = false;
+    }
+    window.toggle_fullscreen();
+    if leaving_fullscreen {
+        if !window.is_fullscreen() {
+            ensure_window_maximized(window);
+            cx.refresh_windows();
+            return;
+        }
+        // GPUI's toggle_fullscreen mutates style/state asynchronously on Windows; wait until it exits before maximizing.
+        poll_main_window(cx, |window, cx| {
+            if !window.is_fullscreen() {
+                ensure_window_maximized(window);
+                cx.refresh_windows();
+                true
+            } else {
+                false
+            }
+        });
+    } else {
+        schedule_fullscreen_taskbar_hide(window, cx);
+    }
+}
+
 /// Maximizes, or restores a maximized window.
 pub fn toggle_maximize(window: &mut Window) {
     if cfg!(target_os = "linux") || !window.is_maximized() {
@@ -3315,17 +3469,8 @@ pub fn toggle_maximize(window: &mut Window) {
     }
     #[cfg(windows)]
     {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        #[link(name = "user32")]
-        unsafe extern "system" {
-            fn ShowWindowAsync(hwnd: isize, cmd: i32) -> i32;
-        }
-        if let Ok(h) = HasWindowHandle::window_handle(&*window) {
-            if let RawWindowHandle::Win32(w) = h.as_raw() {
-                const SW_RESTORE: i32 = 9;
-                unsafe { ShowWindowAsync(w.hwnd.get(), SW_RESTORE) };
-            }
-        }
+        const SW_RESTORE: i32 = 9;
+        show_window_cmd(window, SW_RESTORE);
     }
 }
 
@@ -3351,17 +3496,8 @@ pub fn restore_window(window: &mut Window) {
     }
     #[cfg(windows)]
     {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        #[link(name = "user32")]
-        unsafe extern "system" {
-            fn ShowWindowAsync(hwnd: isize, cmd: i32) -> i32;
-        }
-        if let Ok(h) = HasWindowHandle::window_handle(&*window) {
-            if let RawWindowHandle::Win32(w) = h.as_raw() {
-                const SW_RESTORE: i32 = 9;
-                unsafe { ShowWindowAsync(w.hwnd.get(), SW_RESTORE) };
-            }
-        }
+        const SW_RESTORE: i32 = 9;
+        show_window_cmd(window, SW_RESTORE);
     }
 }
 
@@ -3395,7 +3531,10 @@ fn window_controls(maximized: bool, cx: &App) -> impl IntoElement {
             .w(px(46.))
             .h(px(56.))
             .text_color(p.text)
-            .window_control_area(area)
+            // Keep Max handled in app code so it cleanly toggles Fullscreen <-> Maximized
+            // without Windows WM_NCLBUTTONUP bypassing on_click to restore to a floating window.
+            .when(area != WindowControlArea::Max, |d| d.window_control_area(area))
+            .when(area == WindowControlArea::Max, |d| d.cursor_pointer())
             .when(close, |d| d.hover(|s| s.bg(rgb(0xc42b1c)).text_color(white())))
             .when(!close, move |d| d.hover(move |s| s.bg(p.hover)))
             .child(icon(icon_name).size_4().text_color(p.text))
@@ -3406,7 +3545,7 @@ fn window_controls(maximized: bool, cx: &App) -> impl IntoElement {
                 cx.stop_propagation();
                 match area {
                     WindowControlArea::Min => window.minimize_window(),
-                    WindowControlArea::Max => toggle_maximize(window),
+                    WindowControlArea::Max => toggle_fullscreen_maximized(window, cx),
                     WindowControlArea::Close => {
                         crate::save_window_bounds(window);
                         window.remove_window();
