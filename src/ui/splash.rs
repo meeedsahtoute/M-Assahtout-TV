@@ -223,6 +223,11 @@ fn dive_ease(t: f32) -> f32 {
     cubic_bezier(0.45, 0.0, 0.2, 1.0, t)
 }
 
+fn ca(hex: u32, alpha: f32) -> Hsla {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
+    rgba((hex << 8) | a).into()
+}
+
 /// Renders a horizontal tracked text row so letter spacing smoothly animates at 60fps.
 fn tracked_text(text: &str, font_px: f32, weight: FontWeight, color: Hsla, gap_px: f32) -> Div {
     let mut row = div().flex().items_center().justify_center().gap(px(gap_px));
@@ -286,7 +291,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
         .inset_0()
         .overflow_hidden()
         .occlude()
-        .bg(rgba(0x000000, backdrop_alpha));
+        .bg(ca(0x000000, backdrop_alpha));
 
     // Atmospheric Ruby-Crimson Radial Backlight (300ms - 3200ms)
     let backlight_build = if elapsed_ms < 300.0 {
@@ -311,7 +316,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                     .top(px(cy - rad))
                     .size(px(rad * 2.0))
                     .rounded_full()
-                    .bg(rgba(hex, a)),
+                    .bg(ca(hex, a)),
             );
         }
     }
@@ -340,7 +345,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                             .top(px(by - r))
                             .size(px(r * 2.0))
                             .rounded_full()
-                            .bg(rgba(hex, alpha * 0.16)),
+                            .bg(ca(hex, alpha * 0.16)),
                     )
                     .child(
                         div()
@@ -349,7 +354,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                             .top(px(by - r * 0.42))
                             .size(px(r * 0.84))
                             .rounded_full()
-                            .bg(rgba(hex, alpha * 0.34)),
+                            .bg(ca(hex, alpha * 0.34)),
                     );
             }
         }
@@ -375,7 +380,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                     .w(px(bloom_w))
                     .h(px(bloom_h))
                     .rounded_full()
-                    .bg(rgba(0xFF1E42, slit_fade * 0.24)),
+                    .bg(ca(0xFF1E42, slit_fade * 0.24)),
             );
 
             let core_h = (2.0 + 1.5 * open_ease) * ui_scale;
@@ -391,13 +396,13 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                         .flex()
                         .child(div().w(px(half_w)).h_full().bg(linear_gradient(
                             90.0,
-                            linear_color_stop(rgba(0x991B1B, 0.0).into(), 0.0),
-                            linear_color_stop(rgba(0xFF0033, slit_fade * 0.92).into(), 1.0),
+                            linear_color_stop(ca(0x991B1B, 0.0), 0.0),
+                            linear_color_stop(ca(0xFF0033, slit_fade * 0.92), 1.0),
                         )))
                         .child(div().w(px(half_w)).h_full().bg(linear_gradient(
                             90.0,
-                            linear_color_stop(rgba(0xFF0033, slit_fade * 0.92).into(), 0.0),
-                            linear_color_stop(rgba(0x991B1B, 0.0).into(), 1.0),
+                            linear_color_stop(ca(0xFF0033, slit_fade * 0.92), 0.0),
+                            linear_color_stop(ca(0x991B1B, 0.0), 1.0),
                         ))),
                 )
                 .child(
@@ -408,7 +413,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                         .w(px(slit_w * 0.56))
                         .h(px(1.5 * ui_scale))
                         .rounded_full()
-                        .bg(rgba(0xFFFFFF, slit_fade * 0.94)),
+                        .bg(ca(0xFFFFFF, slit_fade * 0.94)),
                 );
         }
     }
@@ -426,7 +431,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                     .top(px(cy - halo_sz * 0.5))
                     .size(px(halo_sz))
                     .rounded_full()
-                    .bg(rgba(0xFF0033, halo_a)),
+                    .bg(ca(0xFF0033, halo_a)),
             );
         }
 
@@ -457,13 +462,13 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                     .flex()
                     .child(div().w(px(sw_half)).h_full().bg(linear_gradient(
                         90.0,
-                        linear_color_stop(rgba(0xFFFFFF, 0.0).into(), 0.0),
-                        linear_color_stop(rgba(0xF5F5F7, 0.34 * logo_alpha).into(), 1.0),
+                        linear_color_stop(ca(0xFFFFFF, 0.0), 0.0),
+                        linear_color_stop(ca(0xF5F5F7, 0.34 * logo_alpha), 1.0),
                     )))
                     .child(div().w(px(sw_half)).h_full().bg(linear_gradient(
                         90.0,
-                        linear_color_stop(rgba(0xF5F5F7, 0.34 * logo_alpha).into(), 0.0),
-                        linear_color_stop(rgba(0xFF4D6D, 0.0).into(), 1.0),
+                        linear_color_stop(ca(0xF5F5F7, 0.34 * logo_alpha), 0.0),
+                        linear_color_stop(ca(0xFF4D6D, 0.0), 1.0),
                     ))),
             );
         }
@@ -486,7 +491,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                         .top(px(gy - g_sz * 0.5))
                         .size(px(g_sz))
                         .rounded_full()
-                        .bg(rgba(0xFF4D6D, 0.45 * rim_alpha)),
+                        .bg(ca(0xFF4D6D, 0.45 * rim_alpha)),
                 )
                 .child(
                     div()
@@ -495,7 +500,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                         .top(px(gy - g_core * 0.5))
                         .size(px(g_core))
                         .rounded_full()
-                        .bg(rgba(0xFFFFFF, 0.90 * rim_alpha)),
+                        .bg(ca(0xFFFFFF, 0.90 * rim_alpha)),
                 );
         }
 
@@ -525,7 +530,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                 "M. ASSAHTOUT",
                 title_font,
                 FontWeight::BOLD,
-                rgba(0xF5F5F7, text_alpha).into(),
+                ca(0xF5F5F7, text_alpha),
                 title_gap,
             )));
 
@@ -540,13 +545,13 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                     .flex()
                     .child(div().w(px(half_b)).h_full().bg(linear_gradient(
                         90.0,
-                        linear_color_stop(rgba(0xFF0033, 0.0).into(), 0.0),
-                        linear_color_stop(rgba(0xF5F5F7, 0.95).into(), 1.0),
+                        linear_color_stop(ca(0xFF0033, 0.0), 0.0),
+                        linear_color_stop(ca(0xF5F5F7, 0.95), 1.0),
                     )))
                     .child(div().w(px(half_b)).h_full().bg(linear_gradient(
                         90.0,
-                        linear_color_stop(rgba(0xF5F5F7, 0.95).into(), 0.0),
-                        linear_color_stop(rgba(0xFF0033, 0.0).into(), 1.0),
+                        linear_color_stop(ca(0xF5F5F7, 0.95), 0.0),
+                        linear_color_stop(ca(0xFF0033, 0.0), 1.0),
                     ))),
             );
         }
@@ -556,7 +561,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                 "TV EDITION",
                 sub_font,
                 FontWeight::MEDIUM,
-                rgba(0xA8A8B3, sub_alpha).into(),
+                ca(0xA8A8B3, sub_alpha),
                 sub_gap,
             )));
         }
@@ -591,13 +596,13 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                             .flex()
                             .child(div().w(px(half_w)).h_full().bg(linear_gradient(
                                 90.0,
-                                linear_color_stop(rgba(edge_hex, 0.0).into(), 0.0),
-                                linear_color_stop(rgba(core_hex, a * 0.85).into(), 1.0),
+                                linear_color_stop(ca(edge_hex, 0.0), 0.0),
+                                linear_color_stop(ca(core_hex, a * 0.85), 1.0),
                             )))
                             .child(div().w(px(half_w)).h_full().bg(linear_gradient(
                                 90.0,
-                                linear_color_stop(rgba(core_hex, a * 0.85).into(), 0.0),
-                                linear_color_stop(rgba(edge_hex, 0.0).into(), 1.0),
+                                linear_color_stop(ca(core_hex, a * 0.85), 0.0),
+                                linear_color_stop(ca(edge_hex, 0.0), 1.0),
                             ))),
                     );
                 }
@@ -614,7 +619,7 @@ pub fn render_splash(splash: &SplashState, window: &Window) -> AnyElement {
                 .right(px(24.0))
                 .bottom(px(18.0))
                 .text_size(px(11.0))
-                .text_color(rgba(0xA8A8B3, hint_a))
+                .text_color(ca(0xA8A8B3, hint_a))
                 .child("Esc / Space to skip"),
         );
     }
