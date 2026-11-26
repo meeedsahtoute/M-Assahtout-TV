@@ -2031,6 +2031,7 @@ impl PlayerView {
             (pl.transcript_loading, pl.transcript_error.clone(), chips, lang, hits)
         };
         let input_for_chips = input.clone();
+        let has_err = err.is_some();
 
         div()
             .id("vsearch-panel")
@@ -2132,7 +2133,7 @@ impl PlayerView {
             .when_some(err.filter(|_| !loading), |d, msg| {
                 d.child(div().py_3().px_2().text_sm().text_color(hsla(0., 0., 1., 0.65)).child(msg))
             })
-            .when(!loading && err.is_none(), |d| {
+            .when(!loading && !has_err, |d| {
                 d.child(
                     div()
                         .id("vsearch-results")
