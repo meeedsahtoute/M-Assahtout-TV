@@ -1397,7 +1397,7 @@ impl Player {
             return;
         }
         let tracks = info.captions.clone();
-        let pref = store::settings_snapshot().captions_lang;
+        let pref = store::settings_snapshot().captions_lang.clone();
         let serial = self.load_serial;
         self.transcript_loading = true;
         self.transcript_error = None;

@@ -1154,7 +1154,7 @@ impl PlayerView {
                         .left(relative(a))
                         .w(relative(w))
                         .rounded_full()
-                        .bg(if highlights_mode { rgb(0xffd54f) } else { hsla(0.11, 0.95, 0.65, 0.85) }),
+                        .bg(if highlights_mode { hsla(0.125, 1.0, 0.65, 1.0) } else { hsla(0.11, 0.95, 0.65, 0.85) }),
                 );
             }
         }
@@ -1445,13 +1445,13 @@ impl PlayerView {
                         .h_8()
                         .px(px(10.))
                         .rounded_full()
-                        .bg(if highlights_mode { rgb(0xffd54f) } else { hsla(0., 0., 1., 0.14) })
-                        .hover(|s| s.bg(if highlights_mode { rgb(0xffe082) } else { hsla(0., 0., 1., 0.24) }))
+                        .bg(if highlights_mode { hsla(0.125, 1.0, 0.65, 1.0) } else { hsla(0., 0., 1., 0.14) })
+                        .hover(|s| s.bg(if highlights_mode { hsla(0.125, 1.0, 0.75, 1.0) } else { hsla(0., 0., 1., 0.24) }))
                         .cursor_pointer()
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(if highlights_mode { black() } else { white() })
-                        .child(icon("sparkles").size_4().text_color(if highlights_mode { black() } else { rgb(0xffd54f) }))
+                        .child(icon("sparkles").size_4().text_color(if highlights_mode { black() } else { hsla(0.125, 1.0, 0.65, 1.0) }))
                         .when(!narrow, |b| b.child(hl_lbl))
                         .tooltip(|window, cx| component::tooltip::Tooltip::new(translate("Auto-Highlight Reel")).build(window, cx))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -2100,8 +2100,8 @@ impl PlayerView {
                             .px(px(10.))
                             .py_1()
                             .rounded_full()
-                            .bg(if active { white() } else { rgb(0x272727) })
-                            .hover(|s| s.bg(if active { white() } else { rgb(0x3a3a3a) }))
+                            .bg(if active { rgb(0xffffff) } else { rgb(0x272727) })
+                            .hover(|s| s.bg(if active { rgb(0xffffff) } else { rgb(0x3a3a3a) }))
                             .cursor_pointer()
                             .text_xs()
                             .font_weight(FontWeight::MEDIUM)

@@ -12,7 +12,7 @@ const BOKEH_COUNT: usize = 24;
 const RIBBON_COUNT: usize = 14;
 
 /// Exact 48 kHz 16-bit stereo theater-mastered WAV embedded into the binary.
-const INTRO_CINEMA_WAV: &[u8] = include_bytes!("../../android/app/src/main/res/raw/intro_cinema.wav");
+const INTRO_CINEMA_WAV: &[u8] = include_bytes!("../../assets/intro_cinema.wav");
 
 #[derive(Clone, Copy)]
 struct BokehMote {
