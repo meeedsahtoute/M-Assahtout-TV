@@ -1,10 +1,12 @@
 //! Player controller: owns the mpv instance, stream selection, SponsorBlock, queue and progress.
 use super::mpv::{Mpv, MpvEvent, PropValue};
-use crate::i18n::{t as translate, tf};
 use crate::api::services::{self, Segment};
 use crate::api::streams;
 use crate::api::types::*;
+use crate::highlights::{self, HighlightPeak};
+use crate::i18n::{t as translate, tf};
 use crate::store;
+use crate::transcript::{self, TranscriptIndex, TranscriptSearchHit};
 use crate::ui::{blocking, toast};
 use gpui_kit::*;
 use std::collections::HashSet;
@@ -46,6 +48,12 @@ pub struct Player {
     pub volume: f64,
     pub muted: bool,
     pub speed: f64,
+    /// Target playback speed when silence skipping is idle
+    pub base_speed: f64,
+    /// Dynamic silence detection via libmpv `lavfi=[silencedetect=...]`
+    pub skip_silence: bool,
+    silence_active: bool,
+    pub channel_speed_saved: bool,
     keyboard_feedback: Option<(KeyboardFeedback, Task<()>)>,
     pub eof: bool,
     pub frame: Option<Arc<RenderImage>>,
@@ -60,6 +68,14 @@ pub struct Player {
     pub queue_pos: Option<usize>,
     pub chapters: Vec<Chapter>,
     pub heatmap: Vec<(f64, f64, f32)>,
+    pub highlights: Vec<HighlightPeak>,
+    pub highlights_mode: bool,
+    last_hl_jump_at: Option<std::time::Instant>,
+    pub transcript: Option<TranscriptIndex>,
+    pub transcript_loading: bool,
+    pub transcript_error: Option<String>,
+    pub search_open: bool,
+    pub search_focus_pending: bool,
     /// archived annotations of the current video
     pub annotations: Arc<Vec<crate::api::annotations::Annotation>>,
     /// average colour of recent frames, for the ambient glow
@@ -136,6 +152,10 @@ impl Player {
             volume: s.volume,
             muted: false,
             speed: s.default_speed,
+            base_speed: s.default_speed,
+            skip_silence: false,
+            silence_active: false,
+            channel_speed_saved: false,
             boost: None,
             keyboard_feedback: None,
             eof: false,
@@ -151,6 +171,14 @@ impl Player {
             queue_pos: None,
             chapters: Vec::new(),
             heatmap: Vec::new(),
+            highlights: Vec::new(),
+            highlights_mode: false,
+            last_hl_jump_at: None,
+            transcript: None,
+            transcript_loading: false,
+            transcript_error: None,
+            search_open: false,
+            search_focus_pending: false,
             annotations: Arc::new(Vec::new()),
             ambient: None,
             ambient_tick: 0,
@@ -387,6 +415,23 @@ impl Player {
                     ("mute", PropValue::Flag(m)) => self.muted = m,
                     ("dwidth", PropValue::Double(w)) => self.video_size.0 = w,
                     ("dheight", PropValue::Double(h)) => self.video_size.1 = h,
+                    ("af-metadata/silencedetect", PropValue::Str(meta)) => {
+                        if self.skip_silence && self.boost.is_none() {
+                            let is_silence = meta.contains("lavfi.silence_start") && !meta.contains("lavfi.silence_end");
+                            if is_silence != self.silence_active {
+                                self.silence_active = is_silence;
+                                let target = if is_silence {
+                                    (self.base_speed * 2.15).clamp(1.75, 2.5)
+                                } else {
+                                    self.base_speed
+                                };
+                                self.speed = target;
+                                if let Some(m) = &self.mpv {
+                                    m.set_f64("speed", target);
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 if !quiet {
@@ -444,6 +489,31 @@ impl Player {
             let id = self.video.as_ref().map(|v| v.id.clone());
             if let Some(id) = id {
                 cx.default_global::<crate::ui::cards::Watched>().0.insert(id, (t, self.duration));
+            }
+        }
+        // Auto-Highlight Reel ("Highlights / الزبدة" mode): jump across peak intervals
+        if self.highlights_mode && !self.highlights.is_empty() && self.duration > 0.0 {
+            let cooldown_ok = self
+                .last_hl_jump_at
+                .is_none_or(|inst| inst.elapsed() > std::time::Duration::from_millis(900));
+            if cooldown_ok {
+                let t_ms = (t.max(0.0) * 1000.0) as u64;
+                let next_peak = self
+                    .highlights
+                    .iter()
+                    .find(|pk| t_ms < pk.end_ms.saturating_sub(200))
+                    .cloned();
+                match next_peak {
+                    Some(pk) if t_ms + 250 < pk.start_ms => {
+                        self.last_hl_jump_at = Some(std::time::Instant::now());
+                        self.seek_to(pk.start_ms as f64 / 1000.0);
+                    }
+                    None => {
+                        self.highlights_mode = false;
+                        toast(cx, translate("Finished highlights"));
+                    }
+                    _ => {}
+                }
             }
         }
         // SponsorBlock
@@ -574,6 +644,16 @@ impl Player {
         self.storyboard = None;
         self.chapters.clear();
         self.heatmap.clear();
+        self.highlights.clear();
+        self.highlights_mode = false;
+        self.last_hl_jump_at = None;
+        self.transcript = None;
+        self.transcript_loading = false;
+        self.transcript_error = None;
+        self.search_open = false;
+        self.search_focus_pending = false;
+        self.silence_active = false;
+        self.channel_speed_saved = false;
         self.annotations = Arc::new(Vec::new());
         self.ambient = None;
         self.auto_crop = Default::default();
@@ -660,14 +740,24 @@ impl Player {
                         } else {
                             None
                         };
-                        // speed per channel
-                        let speed = p
+                        // speed & skip-silence per channel
+                        let ch_speed = p
                             .channel_id
                             .as_deref()
                             .filter(|_| s.remember_speed_per_channel)
-                            .and_then(store::channel_speed)
-                            .unwrap_or(s.default_speed);
+                            .and_then(store::channel_speed);
+                        let speed = ch_speed.unwrap_or(s.default_speed);
+                        p.channel_speed_saved = ch_speed.is_some();
+                        p.base_speed = speed;
                         p.speed = speed;
+                        p.silence_active = false;
+                        p.skip_silence = p
+                            .channel_id
+                            .as_deref()
+                            .and_then(store::channel_skip_silence)
+                            .unwrap_or(false);
+                        p.apply_skip_silence_filter();
+                        p.refresh_highlights();
                         p.load_current(resume, false, cx);
                     }
                     Err(e) => {
@@ -783,7 +873,7 @@ impl Player {
             return;
         };
         let was_paused = self.paused;
-        let mut opts = vec![format!("speed={}", self.speed)];
+        let mut opts = vec![format!("speed={}", self.base_speed)];
         if info.hls_only && !info.is_live {
             // The proxy already selects one HLS rendition. Limit how much of its
             // opening segments libavformat reads before it can start or resume.
@@ -1095,6 +1185,13 @@ impl Player {
         self.preloaded_until = 0.0;
         let t = if self.duration > 0.0 { t.clamp(0.0, (self.duration - 0.1).max(0.0)) } else { t.max(0.0) };
         self.time = t;
+        if self.silence_active {
+            self.silence_active = false;
+            self.speed = self.base_speed;
+            if let Some(m) = &self.mpv {
+                m.set_f64("speed", self.base_speed);
+            }
+        }
         if let Some(m) = &self.mpv {
             let _ = m.command(&["seek", &format!("{t}"), "absolute+exact"]);
         }
@@ -1144,17 +1241,18 @@ impl Player {
         if self.boost.is_some() || self.video.is_none() {
             return;
         }
-        self.boost = Some(self.speed);
+        self.boost = Some(self.base_speed);
         if self.paused {
             self.set_paused(false);
         }
         if let Some(m) = &self.mpv {
-            m.set_f64("speed", (self.speed * 2.0).clamp(2.0, 4.0));
+            m.set_f64("speed", (self.base_speed * 2.0).clamp(2.0, 4.0));
         }
     }
 
     pub fn end_boost(&mut self) {
         if let Some(prev) = self.boost.take() {
+            self.speed = prev;
             if let Some(m) = &self.mpv {
                 m.set_f64("speed", prev);
             }
@@ -1165,6 +1263,8 @@ impl Player {
         let s = (s * 100.0).round() / 100.0;
         let s = s.clamp(0.1, 5.0);
         self.boost = None;
+        self.silence_active = false;
+        self.base_speed = s;
         self.speed = s;
         if let Some(m) = &self.mpv {
             m.set_f64("speed", s);
@@ -1172,12 +1272,170 @@ impl Player {
         if store::settings_snapshot().remember_speed_per_channel {
             if let Some(c) = &self.channel_id {
                 store::set_channel_speed(c, s);
+                self.channel_speed_saved = (s - 1.0).abs() > 0.001;
             }
         }
     }
 
+    pub fn reset_channel_speed(&mut self, cx: &mut Context<Self>) {
+        self.boost = None;
+        self.silence_active = false;
+        self.base_speed = 1.0;
+        self.speed = 1.0;
+        self.channel_speed_saved = false;
+        if let Some(m) = &self.mpv {
+            m.set_f64("speed", 1.0);
+        }
+        if let Some(c) = &self.channel_id {
+            store::clear_channel_speed(c);
+        }
+        toast(cx, translate("Playback speed reset to 1.0x"));
+        cx.notify();
+    }
+
+    fn apply_skip_silence_filter(&self) {
+        if let Some(m) = &self.mpv {
+            if self.skip_silence {
+                m.set("af", "lavfi=[silencedetect=noise=-32dB:d=0.45]");
+            } else {
+                m.set("af", "");
+            }
+        }
+    }
+
+    pub fn set_skip_silence(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.skip_silence = on;
+        self.silence_active = false;
+        self.apply_skip_silence_filter();
+        if let Some(m) = &self.mpv {
+            self.speed = self.base_speed;
+            m.set_f64("speed", self.base_speed);
+        }
+        if let Some(c) = &self.channel_id {
+            store::set_channel_skip_silence(c, on);
+        }
+        toast(cx, translate(if on { "Skip silence enabled" } else { "Skip silence off" }));
+        cx.notify();
+    }
+
+    pub fn refresh_highlights(&mut self) {
+        self.highlights = highlights::extract_highlights(&self.heatmap, &self.chapters, self.duration);
+        if self.highlights.is_empty() {
+            self.highlights_mode = false;
+        }
+    }
+
+    pub fn active_highlight(&self) -> Option<&HighlightPeak> {
+        if self.highlights.is_empty() {
+            return None;
+        }
+        let t_ms = (self.time.max(0.0) * 1000.0) as u64;
+        self.highlights
+            .iter()
+            .find(|pk| t_ms >= pk.start_ms && t_ms <= pk.end_ms)
+            .or_else(|| self.highlights.iter().find(|pk| pk.start_ms >= t_ms))
+            .or_else(|| self.highlights.last())
+    }
+
+    pub fn toggle_highlights(&mut self, cx: &mut Context<Self>) {
+        if self.highlights.is_empty() {
+            toast(cx, translate("No highlight peaks for this video"));
+            return;
+        }
+        self.highlights_mode = !self.highlights_mode;
+        if self.highlights_mode {
+            let t_ms = (self.time.max(0.0) * 1000.0) as u64;
+            let in_any = self.highlights.iter().any(|pk| t_ms >= pk.start_ms && t_ms <= pk.end_ms);
+            if !in_any {
+                let target = self
+                    .highlights
+                    .iter()
+                    .find(|pk| pk.start_ms > t_ms)
+                    .unwrap_or(&self.highlights[0])
+                    .start_ms;
+                self.last_hl_jump_at = Some(std::time::Instant::now());
+                self.seek_to(target as f64 / 1000.0);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn jump_highlight(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.highlights.is_empty() {
+            return;
+        }
+        let t_ms = (self.time.max(0.0) * 1000.0) as u64;
+        let cur_idx = self
+            .highlights
+            .iter()
+            .position(|pk| t_ms >= pk.start_ms && t_ms <= pk.end_ms)
+            .or_else(|| self.highlights.iter().position(|pk| pk.start_ms > t_ms))
+            .unwrap_or(0);
+        let len = self.highlights.len() as isize;
+        let next_idx = ((cur_idx as isize + delta).rem_euclid(len)) as usize;
+        let target = self.highlights[next_idx].start_ms;
+        self.highlights_mode = true;
+        self.last_hl_jump_at = Some(std::time::Instant::now());
+        self.seek_to(target as f64 / 1000.0);
+        cx.notify();
+    }
+
+    pub fn set_search_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.search_open = open;
+        self.search_focus_pending = open;
+        if open && self.transcript.is_none() && !self.transcript_loading {
+            self.ensure_transcript(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn ensure_transcript(&mut self, cx: &mut Context<Self>) {
+        let Some(info) = self.streams.clone() else { return };
+        if info.captions.is_empty() {
+            self.transcript_error = Some(translate("No captions available for this video").into());
+            cx.notify();
+            return;
+        }
+        let tracks = info.captions.clone();
+        let pref = store::settings_snapshot().captions_lang;
+        let serial = self.load_serial;
+        self.transcript_loading = true;
+        self.transcript_error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let res = blocking(move || transcript::fetch_transcript(&tracks, &pref)).await;
+            let _ = this.update(cx, |p, cx| {
+                if p.load_serial != serial {
+                    return;
+                }
+                p.transcript_loading = false;
+                match res {
+                    Ok(idx) if !idx.segments.is_empty() => {
+                        p.transcript = Some(idx);
+                        p.transcript_error = None;
+                    }
+                    Ok(_) => {
+                        p.transcript_error = Some(translate("Transcript is empty").into());
+                    }
+                    Err(e) => {
+                        p.transcript_error = Some(e.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub fn search_transcript(&self, query: &str) -> Vec<TranscriptSearchHit> {
+        let Some(idx) = &self.transcript else {
+            return Vec::new();
+        };
+        transcript::search_segments(&idx.segments, query, 40)
+    }
+
     pub fn step_speed(&mut self, increase: bool) {
-        let steps = self.speed / 0.25;
+        let steps = self.base_speed / 0.25;
         let next = if increase { steps.floor() + 1.0 } else { steps.ceil() - 1.0 };
         self.set_speed(next * 0.25);
     }

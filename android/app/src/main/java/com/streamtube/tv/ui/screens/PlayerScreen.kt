@@ -1,10 +1,14 @@
 package com.streamtube.tv.ui.screens
 
 import android.app.Activity
+import android.content.Intent
+import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -38,9 +42,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -54,12 +60,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
@@ -70,6 +78,8 @@ import com.streamtube.tv.core.ChatMessageDto
 import com.streamtube.tv.core.CommentDto
 import com.streamtube.tv.core.NativeBridge
 import com.streamtube.tv.core.SettingsDto
+import com.streamtube.tv.core.TranscriptIndexDto
+import com.streamtube.tv.core.TranscriptSearchHitDto
 import com.streamtube.tv.core.VideoItemDto
 import com.streamtube.tv.core.WatchBundleDto
 import com.streamtube.tv.player.ExoPlayerController
@@ -78,6 +88,8 @@ import com.streamtube.tv.ui.LoadingPane
 import com.streamtube.tv.ui.StColors
 import com.streamtube.tv.ui.TvButton
 import com.streamtube.tv.ui.TvChip
+import com.streamtube.tv.ui.TvIcons
+import com.streamtube.tv.ui.TvTextField
 import com.streamtube.tv.ui.VideoCard
 import com.streamtube.tv.ui.formatCompactCount
 import com.streamtube.tv.ui.formatDurationSecs
@@ -94,6 +106,7 @@ private enum class DrawerTab(val label: String) {
     CHAT("Live Chat")
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PlayerScreen(
     initialVideo: VideoItemDto,
@@ -132,9 +145,76 @@ fun PlayerScreen(
     var chatMessages by remember { mutableStateOf<List<ChatMessageDto>>(emptyList()) }
     var chatNext by remember { mutableStateOf<String?>(null) }
 
+    var channelSpeedSaved by remember(currentVideo.id) { mutableStateOf(false) }
+    var searchOpen by remember(currentVideo.id) { mutableStateOf(false) }
+    var transcriptIndex by remember(currentVideo.id) { mutableStateOf<TranscriptIndexDto?>(null) }
+    var transcriptLoading by remember(currentVideo.id) { mutableStateOf(false) }
+    var transcriptError by remember(currentVideo.id) { mutableStateOf<String?>(null) }
+    var searchQuery by remember(currentVideo.id) { mutableStateOf("") }
+    var searchHits by remember(currentVideo.id) { mutableStateOf<List<TranscriptSearchHitDto>>(emptyList()) }
+
     val rootFocus = remember { FocusRequester() }
     val drawerFocus = remember { FocusRequester() }
+    val quickRowFocus = remember { FocusRequester() }
+    val searchFocus = remember { FocusRequester() }
+    val searchResultsFocus = remember { FocusRequester() }
     val accent = MaterialTheme.colorScheme.primary
+
+    fun openVideoSearch() {
+        searchOpen = true
+        drawerOpen = false
+        hudVisible = true
+        val b = bundle ?: return
+        if (transcriptIndex == null && !transcriptLoading) {
+            if (b.streams.captions.isEmpty()) {
+                transcriptError = "No captions available for this video"
+                return
+            }
+            transcriptLoading = true
+            transcriptError = null
+            scope.launch {
+                NativeBridge.fetchTranscript(b.streams.captions, settings.captionsLang).fold(
+                    onSuccess = { idx ->
+                        transcriptIndex = idx
+                        searchHits = idx.segments.take(24).map {
+                            TranscriptSearchHitDto(it.startMs, it.durationMs, it.text, 50)
+                        }
+                        transcriptLoading = false
+                    },
+                    onFailure = { e ->
+                        transcriptError = e.message ?: "Failed to load captions"
+                        transcriptLoading = false
+                    }
+                )
+            }
+        }
+    }
+
+    val voiceSearchLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+            if (!spoken.isNullOrEmpty()) {
+                searchQuery = spoken
+            }
+        }
+    }
+
+    fun launchInVideoVoice() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak a phrase to jump inside video")
+        }
+        if (intent.resolveActivity(context.packageManager) != null) {
+            voiceSearchLauncher.launch(intent)
+        } else {
+            transcriptError = "Voice recognizer unavailable on this device"
+        }
+    }
 
     fun touchHud() {
         hudVisible = true
@@ -194,6 +274,10 @@ fun PlayerScreen(
 
     BackHandler {
         when {
+            searchOpen -> {
+                searchOpen = false
+                touchHud()
+            }
             drawerOpen -> {
                 drawerOpen = false
                 touchHud()
@@ -238,6 +322,8 @@ fun PlayerScreen(
                 } else null
 
                 val initSpeed = (b.channelSpeed ?: settings.defaultSpeed).toFloat().coerceIn(0.25f, 3.0f)
+                channelSpeedSaved = b.channelSpeed != null && kotlin.math.abs(b.channelSpeed - 1.0) > 0.01
+                val initSkipSilence = b.channelSkipSilence ?: false
 
                 controller.load(
                     video = enriched,
@@ -249,7 +335,9 @@ fun PlayerScreen(
                     selectedQuality = settings.defaultQuality,
                     selectedCodec = settings.codecPref,
                     captionsLang = capLang,
-                    audioOnly = settings.audioOnly
+                    audioOnly = settings.audioOnly,
+                    highlights = b.highlights,
+                    skipSilence = initSkipSilence
                 )
                 NativeBridge.recordWatchStart(enriched, b.streams.lengthSecs.toDouble())
                 loading = false
@@ -262,12 +350,29 @@ fun PlayerScreen(
         )
     }
 
-    // Auto-hide HUD when playing and drawer closed
-    LaunchedEffect(hudVisible, drawerOpen, pState.isPlaying, lastInteraction) {
-        if (hudVisible && !drawerOpen && pState.isPlaying) {
+    // Auto-hide HUD when playing and overlays closed
+    LaunchedEffect(hudVisible, drawerOpen, searchOpen, pState.isPlaying, lastInteraction) {
+        if (hudVisible && !drawerOpen && !searchOpen && pState.isPlaying) {
             delay(settings.controlsHideMs.coerceAtLeast(2500L))
-            if (!drawerOpen && pState.isPlaying && System.currentTimeMillis() - lastInteraction >= 2400L) {
+            if (!drawerOpen && !searchOpen && pState.isPlaying && System.currentTimeMillis() - lastInteraction >= 2400L) {
                 hudVisible = false
+            }
+        }
+    }
+
+    // Re-index / search transcript via Rust engine off-thread as query updates
+    LaunchedEffect(searchOpen, searchQuery, transcriptIndex) {
+        val idx = transcriptIndex ?: return@LaunchedEffect
+        if (!searchOpen) return@LaunchedEffect
+        val q = searchQuery.trim()
+        if (q.isEmpty()) {
+            searchHits = idx.segments.take(24).map {
+                TranscriptSearchHitDto(it.startMs, it.durationMs, it.text, 50)
+            }
+        } else {
+            delay(90)
+            NativeBridge.searchTranscript(idx.segments, q).onSuccess { hits ->
+                searchHits = hits
             }
         }
     }
@@ -311,11 +416,11 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(drawerOpen) {
-        if (drawerOpen) {
-            runCatching { drawerFocus.requestFocus() }
-        } else {
-            runCatching { rootFocus.requestFocus() }
+    LaunchedEffect(drawerOpen, searchOpen) {
+        when {
+            searchOpen -> runCatching { searchFocus.requestFocus() }
+            drawerOpen -> runCatching { drawerFocus.requestFocus() }
+            else -> runCatching { rootFocus.requestFocus() }
         }
     }
 
@@ -359,6 +464,14 @@ fun PlayerScreen(
             .focusRequester(rootFocus)
             .onKeyEvent { ev ->
                 if (ev.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
+                if (searchOpen) {
+                    if (ev.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK) {
+                        searchOpen = false
+                        touchHud()
+                        return@onKeyEvent true
+                    }
+                    return@onKeyEvent false
+                }
                 if (drawerOpen) {
                     if (ev.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK) {
                         drawerOpen = false
@@ -368,6 +481,10 @@ fun PlayerScreen(
                     return@onKeyEvent false
                 }
                 when (ev.nativeKeyEvent.keyCode) {
+                    KeyEvent.KEYCODE_SEARCH -> {
+                        openVideoSearch()
+                        true
+                    }
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                         controller.togglePlayPause()
                         touchHud()
@@ -407,6 +524,7 @@ fun PlayerScreen(
                     }
                     KeyEvent.KEYCODE_DPAD_UP -> {
                         touchHud()
+                        runCatching { quickRowFocus.requestFocus() }
                         true
                     }
                     else -> false
@@ -512,8 +630,38 @@ fun PlayerScreen(
                     }
                 }
 
+                // 4b. Active Highlights HUD Pill (always accessible while Highlights mode is ON)
+                if (pState.highlightsMode && pState.highlights.isNotEmpty() && !searchOpen) {
+                    val activePk = pState.highlights.firstOrNull { it.index == pState.activeHighlightIndex }
+                        ?: pState.highlights.first()
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 74.dp, end = 28.dp)
+                            .background(Color(0xE6181818), RoundedCornerShape(22.dp))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = buildString {
+                                append("⚡ Highlight ${activePk.index}/${activePk.total}")
+                                activePk.label?.let { append(" • $it") }
+                            },
+                            color = Color(0xFFFFD54F),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        TvButton(label = "Prev", onClick = { controller.jumpHighlight(-1); touchHud() })
+                        TvButton(label = "Next", onClick = { controller.jumpHighlight(1); touchHud() })
+                        TvButton(label = "Exit", onClick = { controller.toggleHighlights(); touchHud() })
+                    }
+                }
+
                 // 5. Player HUD & Quick Controls Drawer
-                if (hudVisible || drawerOpen) {
+                if ((hudVisible || drawerOpen) && !searchOpen) {
                     val b = bundle
                     val posSecs = pState.positionMs / 1000.0
                     val activeChapter = remember(b?.watch?.chapters, pState.positionMs) {
@@ -553,6 +701,10 @@ fun PlayerScreen(
                                 )
                                 val sub = buildString {
                                     append(currentVideo.channelName)
+                                    if (channelSpeedSaved || kotlin.math.abs(pState.speed - 1.0f) > 0.01f) {
+                                        val chShort = currentVideo.channelName.take(14)
+                                        append("  •  ${"%.2f".format(pState.speed)}x • $chShort")
+                                    }
                                     b?.votes?.let { v ->
                                         append("  •  👍 ${formatCompactCount(v.likes)}  👎 ${formatCompactCount(v.dislikes)}")
                                     }
@@ -636,8 +788,22 @@ fun PlayerScreen(
                                         size = Size(w * bufFrac, h),
                                         cornerRadius = CornerRadius(h / 2, h / 2)
                                     )
-                                    // SponsorBlock colored segments on seekbar
+                                    // SponsorBlock colored segments + Highlight peak markers on seekbar
                                     val durSec = durMs / 1000.0
+                                    if (durSec > 0.0 && settings.showHeatmap) {
+                                        for (pt in b?.watch?.heatmap.orEmpty()) {
+                                            if (pt.size >= 3) {
+                                                val hx = ((pt[0] / durSec).toFloat().coerceIn(0f, 1f)) * w
+                                                val hw = ((pt[1] / durSec).toFloat().coerceAtLeast(0.004f)) * w
+                                                val barH = (pt[2].toFloat().coerceIn(0.05f, 1f)) * 18.dp.toPx()
+                                                drawRect(
+                                                    color = Color.White.copy(alpha = 0.22f),
+                                                    topLeft = Offset(hx, -barH - 2f),
+                                                    size = Size(hw, barH)
+                                                )
+                                            }
+                                        }
+                                    }
                                     if (durSec > 0.0 && pState.sponsorBlockEnabled) {
                                         for (seg in b?.segments.orEmpty()) {
                                             if (seg.userAction == "off") continue
@@ -648,6 +814,20 @@ fun PlayerScreen(
                                                     color = Color((0xFF000000L or (seg.color and 0xFFFFFFL)).toInt()),
                                                     topLeft = Offset(sx, 0f),
                                                     size = Size((ex - sx).coerceAtLeast(3f), h)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (durMs > 0L && pState.highlights.isNotEmpty()) {
+                                        val markerColor = if (pState.highlightsMode) Color(0xFFFFD54F) else Color(0xCCFFB300)
+                                        for (pk in pState.highlights) {
+                                            val sx = (pk.startMs.toFloat() / durMs.toFloat()).coerceIn(0f, 1f) * w
+                                            val ex = (pk.endMs.toFloat() / durMs.toFloat()).coerceIn(0f, 1f) * w
+                                            if (ex > sx) {
+                                                drawRect(
+                                                    color = markerColor,
+                                                    topLeft = Offset(sx, h - 3.dp.toPx()),
+                                                    size = Size((ex - sx).coerceAtLeast(4f), 3.dp.toPx())
                                                 )
                                             }
                                         }
@@ -666,16 +846,70 @@ fun PlayerScreen(
                             }
 
                             if (!drawerOpen) {
-                                Row(
+                                LazyRow(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    TvButton(label = if (pState.isPlaying) "Pause" else "Play", selected = true, onClick = { controller.togglePlayPause(); touchHud() })
-                                    TvButton(label = "-${settings.seekStep.toInt()}s", onClick = { controller.seekBy(-(settings.seekStep * 1000).toLong()); touchHud() })
-                                    TvButton(label = "+${settings.seekStep.toInt()}s", onClick = { controller.seekBy((settings.seekStep * 1000).toLong()); touchHud() })
-                                    TvButton(label = "Controls & Info", onClick = { drawerOpen = true })
-                                    TvButton(label = "Back", onClick = { exitPlayer() })
+                                    item {
+                                        TvButton(
+                                            label = if (pState.isPlaying) "Pause" else "Play",
+                                            selected = true,
+                                            onClick = { controller.togglePlayPause(); touchHud() },
+                                            modifier = Modifier.focusRequester(quickRowFocus)
+                                        )
+                                    }
+                                    item { TvButton(label = "-${settings.seekStep.toInt()}s", onClick = { controller.seekBy(-(settings.seekStep * 1000).toLong()); touchHud() }) }
+                                    item { TvButton(label = "+${settings.seekStep.toInt()}s", onClick = { controller.seekBy((settings.seekStep * 1000).toLong()); touchHud() }) }
+                                    if (pState.highlights.isNotEmpty()) {
+                                        item {
+                                            TvButton(
+                                                label = if (pState.highlightsMode) "⚡ Highlights (${pState.activeHighlightIndex}/${pState.highlights.size})" else "⚡ Highlights",
+                                                selected = pState.highlightsMode,
+                                                onClick = { controller.toggleHighlights(); touchHud() }
+                                            )
+                                        }
+                                    }
+                                    item {
+                                        TvButton(
+                                            label = "🔍 Search",
+                                            selected = searchOpen,
+                                            onClick = { openVideoSearch() }
+                                        )
+                                    }
+                                    item {
+                                        TvButton(
+                                            label = "Skip Silence: ${if (pState.skipSilenceEnabled) "ON" else "OFF"}",
+                                            selected = pState.skipSilenceEnabled,
+                                            onClick = {
+                                                val next = !pState.skipSilenceEnabled
+                                                controller.setSkipSilence(next)
+                                                val cid = currentVideo.channelId.orEmpty()
+                                                if (cid.isNotEmpty()) {
+                                                    scope.launch { NativeBridge.setChannelSkipSilence(cid, next) }
+                                                }
+                                                touchHud()
+                                            }
+                                        )
+                                    }
+                                    if (channelSpeedSaved || kotlin.math.abs(pState.speed - 1.0f) > 0.01f) {
+                                        item {
+                                            TvButton(
+                                                label = "${"%.2f".format(pState.speed)}x Reset",
+                                                onClick = {
+                                                    controller.setSpeed(1.0f)
+                                                    channelSpeedSaved = false
+                                                    val cid = currentVideo.channelId.orEmpty()
+                                                    if (cid.isNotEmpty()) {
+                                                        scope.launch { NativeBridge.clearChannelSpeed(cid) }
+                                                    }
+                                                    touchHud()
+                                                }
+                                            )
+                                        }
+                                    }
+                                    item { TvButton(label = "Controls & Info", onClick = { drawerOpen = true }) }
+                                    item { TvButton(label = "Back", onClick = { exitPlayer() }) }
                                 }
                             } else {
                                 // Drawer Tabs
@@ -744,7 +978,23 @@ fun PlayerScreen(
                                                                         controller.setSpeed(sp)
                                                                         val cid = currentVideo.channelId.orEmpty()
                                                                         if (settings.rememberSpeedPerChannel && cid.isNotEmpty()) {
+                                                                            channelSpeedSaved = kotlin.math.abs(sp - 1.0f) > 0.01f
                                                                             scope.launch { NativeBridge.setChannelSpeed(cid, sp.toDouble()) }
+                                                                        }
+                                                                    }
+                                                                )
+                                                            }
+                                                        }
+                                                        if (channelSpeedSaved || kotlin.math.abs(pState.speed - 1.0f) > 0.01f) {
+                                                            item {
+                                                                TvButton(
+                                                                    label = "Reset 1.0x (Channel)",
+                                                                    onClick = {
+                                                                        controller.setSpeed(1.0f)
+                                                                        channelSpeedSaved = false
+                                                                        val cid = currentVideo.channelId.orEmpty()
+                                                                        if (cid.isNotEmpty()) {
+                                                                            scope.launch { NativeBridge.clearChannelSpeed(cid) }
                                                                         }
                                                                     }
                                                                 )
@@ -802,6 +1052,38 @@ fun PlayerScreen(
                                                                 else -> "Fit"
                                                             }
                                                             TvButton(label = "Aspect: $rLbl", onClick = { controller.cycleResizeMode() })
+                                                        }
+                                                         item {
+                                                            TvButton(
+                                                                label = "Skip Silence: ${if (pState.skipSilenceEnabled) "ON" else "OFF"}",
+                                                                selected = pState.skipSilenceEnabled,
+                                                                onClick = {
+                                                                    val next = !pState.skipSilenceEnabled
+                                                                    controller.setSkipSilence(next)
+                                                                    val cid = currentVideo.channelId.orEmpty()
+                                                                    if (cid.isNotEmpty()) {
+                                                                        scope.launch { NativeBridge.setChannelSkipSilence(cid, next) }
+                                                                    }
+                                                                }
+                                                            )
+                                                        }
+                                                        if (pState.highlights.isNotEmpty()) {
+                                                            item {
+                                                                TvButton(
+                                                                    label = if (pState.highlightsMode) "⚡ Highlights: ON" else "⚡ Highlights: OFF",
+                                                                    selected = pState.highlightsMode,
+                                                                    onClick = {
+                                                                        controller.toggleHighlights()
+                                                                        drawerOpen = false
+                                                                    }
+                                                                )
+                                                            }
+                                                        }
+                                                        item {
+                                                            TvButton(
+                                                                label = "🔍 Search in Video",
+                                                                onClick = { openVideoSearch() }
+                                                            )
                                                         }
                                                         item {
                                                             TvButton(label = "Loop: ${if (pState.loopVideo) "ON" else "OFF"}", selected = pState.loopVideo, onClick = { controller.toggleLoop() })
@@ -1013,6 +1295,122 @@ fun PlayerScreen(
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 6. Floating In-Video Search Overlay (Voice Mic + Smart Topic Chips + Timestamped Hits)
+                if (searchOpen) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0x99000000))
+                            .padding(horizontal = 48.dp, vertical = 32.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth(0.78f)
+                                .background(StColors.Surface, RoundedCornerShape(16.dp))
+                                .padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(imageVector = TvIcons.Search, contentDescription = null, tint = StColors.TextSecondary, modifier = Modifier.size(20.dp))
+                                TvTextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    placeholder = "Search spoken words in video…",
+                                    imeAction = ImeAction.Search,
+                                    onSubmit = {
+                                        searchHits.firstOrNull()?.let { hit ->
+                                            controller.seekToMs(hit.startMs)
+                                            searchOpen = false
+                                            touchHud()
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .focusRequester(searchFocus)
+                                        .focusProperties { down = searchResultsFocus }
+                                )
+                                transcriptIndex?.language?.takeIf { it.isNotBlank() }?.let { lang ->
+                                    Text(
+                                        text = lang,
+                                        color = StColors.TextSecondary,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier
+                                            .background(StColors.Chip, RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                                TvButton(
+                                    label = "🎙️ Voice",
+                                    onClick = { launchInVideoVoice() }
+                                )
+                                TvButton(
+                                    label = "Close",
+                                    onClick = {
+                                        searchOpen = false
+                                        touchHud()
+                                    }
+                                )
+                            }
+
+                            val chips = transcriptIndex?.chips.orEmpty()
+                            if (chips.isNotEmpty()) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    itemsIndexed(chips) { _, chip ->
+                                        TvChip(
+                                            label = chip,
+                                            selected = searchQuery.trim().equals(chip, ignoreCase = true),
+                                            onClick = {
+                                                searchQuery = if (searchQuery.trim().equals(chip, ignoreCase = true)) "" else chip
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            when {
+                                transcriptLoading -> LoadingPane("Indexing video captions…")
+                                transcriptError != null -> Text(
+                                    text = transcriptError ?: "",
+                                    color = StColors.TextSecondary,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(vertical = 16.dp)
+                                )
+                                searchHits.isEmpty() -> Text(
+                                    text = "No matching spoken moments found.",
+                                    color = StColors.TextSecondary,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(vertical = 16.dp)
+                                )
+                                else -> LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(260.dp)
+                                        .focusRequester(searchResultsFocus),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    itemsIndexed(searchHits) { _, hit ->
+                                        val timeLabel = formatDurationSecs(hit.startMs / 1000L)
+                                        TvButton(
+                                            label = "[$timeLabel]  ${hit.text}",
+                                            onClick = {
+                                                controller.seekToMs(hit.startMs)
+                                                searchOpen = false
+                                                touchHud()
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
                                     }
                                 }
                             }

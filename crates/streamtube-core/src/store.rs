@@ -460,6 +460,7 @@ const TABLES: &str = "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value
      CREATE TABLE IF NOT EXISTS search_history (query TEXT PRIMARY KEY, at INTEGER NOT NULL);
      CREATE TABLE IF NOT EXISTS feed_cache (channel_id TEXT PRIMARY KEY, json TEXT NOT NULL, fetched_at INTEGER NOT NULL);
      CREATE TABLE IF NOT EXISTS channel_speed (channel_id TEXT PRIMARY KEY, speed REAL NOT NULL);
+     CREATE TABLE IF NOT EXISTS channel_audio_prefs (channel_id TEXT PRIMARY KEY, skip_silence INTEGER NOT NULL DEFAULT 0);
      CREATE TABLE IF NOT EXISTS saved_playlists (playlist_id TEXT PRIMARY KEY, json TEXT NOT NULL, added_at INTEGER NOT NULL);";
 
 /// Opens the database and checks it. A damaged one (its pages no longer agree
@@ -1050,6 +1051,32 @@ pub fn speed_reset_available(channel_id: &str) -> bool {
 
 pub fn clear_channel_speed(channel_id: &str) {
     let _ = db().lock().execute("DELETE FROM channel_speed WHERE channel_id=?1", [channel_id]);
+}
+
+pub fn channel_skip_silence(channel_id: &str) -> Option<bool> {
+    if channel_id.trim().is_empty() {
+        return None;
+    }
+    db().lock()
+        .query_row(
+            "SELECT skip_silence FROM channel_audio_prefs WHERE channel_id=?1",
+            [channel_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .map(|v| v != 0)
+}
+
+pub fn set_channel_skip_silence(channel_id: &str, skip: bool) {
+    if channel_id.trim().is_empty() {
+        return;
+    }
+    let _ = db().lock().execute(
+        "INSERT INTO channel_audio_prefs (channel_id, skip_silence) VALUES (?1, ?2) ON CONFLICT(channel_id) DO UPDATE SET skip_silence=excluded.skip_silence",
+        params![channel_id, i64::from(skip)],
+    );
 }
 
 // ───────────────────────── content filter ─────────────────────────

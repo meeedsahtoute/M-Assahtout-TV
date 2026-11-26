@@ -358,6 +358,43 @@ data class VotesDto(
 
 @Immutable
 @Serializable
+data class HighlightSegmentDto(
+    @SerialName("start_ms") val startMs: Long = 0L,
+    @SerialName("end_ms") val endMs: Long = 0L,
+    val intensity: Float = 0f,
+    val index: Int = 1,
+    val total: Int = 1,
+    val label: String? = null
+)
+
+@Immutable
+@Serializable
+data class TranscriptSegmentDto(
+    @SerialName("start_ms") val startMs: Long = 0L,
+    @SerialName("duration_ms") val durationMs: Long = 0L,
+    val text: String = ""
+)
+
+@Immutable
+@Serializable
+data class TranscriptSearchHitDto(
+    @SerialName("start_ms") val startMs: Long = 0L,
+    @SerialName("duration_ms") val durationMs: Long = 0L,
+    val text: String = "",
+    val score: Int = 0
+)
+
+@Immutable
+@Serializable
+data class TranscriptIndexDto(
+    val language: String = "",
+    @SerialName("is_auto") val isAuto: Boolean = false,
+    val segments: List<TranscriptSegmentDto> = emptyList(),
+    val chips: List<String> = emptyList()
+)
+
+@Immutable
+@Serializable
 data class WatchBundleDto(
     val watch: WatchInfoDto,
     val streams: StreamInfoDto,
@@ -368,6 +405,8 @@ data class WatchBundleDto(
     val votes: VotesDto? = null,
     @SerialName("resume_secs") val resumeSecs: Double = 0.0,
     @SerialName("channel_speed") val channelSpeed: Double? = null,
+    @SerialName("channel_skip_silence") val channelSkipSilence: Boolean? = null,
+    val highlights: List<HighlightSegmentDto> = emptyList(),
     val rating: Int = 0,
     @SerialName("is_subscribed") val isSubscribed: Boolean = false,
     @SerialName("in_watch_later") val inWatchLater: Boolean = false,

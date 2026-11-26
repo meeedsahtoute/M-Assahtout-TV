@@ -1956,6 +1956,13 @@ impl AppView {
             return;
         }
         if k == "escape" {
+            let p = player(cx);
+            if p.read(cx).search_open {
+                p.update(cx, |pl, cx| pl.set_search_open(false, cx));
+                window.focus(&self.focus, cx);
+                cx.notify();
+                return;
+            }
             if self.dialog.is_some() {
                 self.dialog = None;
                 cx.notify();
@@ -1999,6 +2006,13 @@ impl AppView {
         if m.alt && k == "right" {
             self.forward(window, cx);
             return;
+        }
+        if m.control && k == "f" {
+            let p = player(cx);
+            if p.read(cx).video.is_some() {
+                p.update(cx, |pl, cx| pl.set_search_open(!pl.search_open, cx));
+                return;
+            }
         }
         if m.control && (k == "l" || k == "k") || k == "/" {
             let fh = self.search.read(cx).focus_handle(cx);

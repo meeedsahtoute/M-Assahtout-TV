@@ -70,6 +70,10 @@ object NativeBridge {
     private external fun nativeTogglePlaylistItem(playlistId: Long, videoJson: String): String
     private external fun nativeSetVideoRating(videoId: String, rating: Int): String
     private external fun nativeSetChannelSpeed(channelId: String, speed: Double): String
+    private external fun nativeClearChannelSpeed(channelId: String): String
+    private external fun nativeSetChannelSkipSilence(channelId: String, skip: Boolean): String
+    private external fun nativeFetchTranscript(captionsJson: String, preferredLang: String): String
+    private external fun nativeSearchTranscript(segmentsJson: String, query: String): String
     private external fun nativeGetAuthStatus(): String
     private external fun nativeStartTvLogin(): String
     private external fun nativePollTvLogin(deviceCodeJson: String): String
@@ -238,6 +242,24 @@ object NativeBridge {
 
     suspend fun setChannelSpeed(channelId: String, speed: Double): Result<Boolean> =
         callNative { nativeSetChannelSpeed(channelId, speed) }
+
+    suspend fun clearChannelSpeed(channelId: String): Result<Boolean> =
+        callNative { nativeClearChannelSpeed(channelId) }
+
+    suspend fun setChannelSkipSilence(channelId: String, skip: Boolean): Result<Boolean> =
+        callNative { nativeSetChannelSkipSilence(channelId, skip) }
+
+    suspend fun fetchTranscript(
+        captions: List<CaptionTrackDto>,
+        preferredLang: String
+    ): Result<TranscriptIndexDto> =
+        callNative { nativeFetchTranscript(json.encodeToString(captions), preferredLang) }
+
+    suspend fun searchTranscript(
+        segments: List<TranscriptSegmentDto>,
+        query: String
+    ): Result<List<TranscriptSearchHitDto>> =
+        callNative { nativeSearchTranscript(json.encodeToString(segments), query) }
 
     suspend fun getAuthStatus(): Result<AuthStatusDto> =
         callNative { nativeGetAuthStatus() }

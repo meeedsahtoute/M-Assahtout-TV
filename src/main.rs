@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-pub use streamtube_core::{api, feed, import, links, locale, perf, recommend, store};
+pub use streamtube_core::{api, feed, highlights, import, links, locale, perf, recommend, store, transcript};
 
 mod assets;
 mod display;

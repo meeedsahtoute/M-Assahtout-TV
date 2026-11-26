@@ -178,7 +178,7 @@ pub struct StreamFormat {
     pub is_muxed: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CaptionTrack {
     pub lang: String,
     pub name: String,

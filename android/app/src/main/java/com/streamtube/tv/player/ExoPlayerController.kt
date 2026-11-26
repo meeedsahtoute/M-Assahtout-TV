@@ -24,6 +24,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.streamtube.tv.core.AppRuntime
+import com.streamtube.tv.core.HighlightSegmentDto
 import com.streamtube.tv.core.NativeBridge
 import com.streamtube.tv.core.PlaybackPlanDto
 import com.streamtube.tv.core.SegmentDto
@@ -57,6 +58,10 @@ data class PlayerUiState(
     val resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     val loopVideo: Boolean = false,
     val sponsorBlockEnabled: Boolean = true,
+    val skipSilenceEnabled: Boolean = false,
+    val highlights: List<HighlightSegmentDto> = emptyList(),
+    val highlightsMode: Boolean = false,
+    val activeHighlightIndex: Int = 0,
     val skipToast: String? = null,
     val statsForNerds: Boolean = false,
     val videoWidth: Int = 0,
@@ -91,6 +96,7 @@ class ExoPlayerController(context: Context) {
     private var tickerJob: Job? = null
     private var toastJob: Job? = null
     private var lastProgressSaveMs = 0L
+    private var lastHighlightJumpMs = 0L
 
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -148,14 +154,18 @@ class ExoPlayerController(context: Context) {
         selectedQuality: Int,
         selectedCodec: String,
         captionsLang: String?,
-        audioOnly: Boolean
+        audioOnly: Boolean,
+        highlights: List<HighlightSegmentDto> = emptyList(),
+        skipSilence: Boolean = false
     ) {
         this.currentVideoId = video.id
         this.segments = segments
         this.settings = settings
         this.skippedRecently.clear()
         this.mutedBySponsor = false
+        this.lastHighlightJumpMs = 0L
         player.volume = 1f
+        player.skipSilenceEnabled = skipSilence
 
         ExoPlayerHolder.keepBackgroundAudio = audioOnly || settings.backgroundPlay
 
@@ -172,6 +182,10 @@ class ExoPlayerController(context: Context) {
                 captionsLang = captionsLang,
                 loopVideo = settings.loopVideo,
                 sponsorBlockEnabled = settings.sponsorblock,
+                skipSilenceEnabled = skipSilence,
+                highlights = highlights,
+                highlightsMode = false,
+                activeHighlightIndex = 0,
                 streamSource = plan.source,
                 videoWidth = plan.width,
                 videoHeight = plan.height,
@@ -303,6 +317,7 @@ class ExoPlayerController(context: Context) {
                     refreshStats()
                 }
                 checkSponsorBlock(pos)
+                checkHighlights(pos, dur)
                 maybeSaveProgress(pos, dur)
             }
         }
@@ -438,6 +453,76 @@ class ExoPlayerController(context: Context) {
 
     fun toggleSponsorBlock() {
         _state.update { it.copy(sponsorBlockEnabled = !it.sponsorBlockEnabled) }
+    }
+
+    fun setSkipSilence(enabled: Boolean) {
+        player.skipSilenceEnabled = enabled
+        _state.update { it.copy(skipSilenceEnabled = enabled) }
+        showSkipToast(if (enabled) "Skip Silence: ON" else "Skip Silence: OFF")
+    }
+
+    fun toggleHighlights() {
+        val list = _state.value.highlights
+        if (list.isEmpty()) {
+            showSkipToast("No highlights for this video")
+            return
+        }
+        val enabling = !_state.value.highlightsMode
+        if (enabling) {
+            val pos = player.currentPosition.coerceAtLeast(0L)
+            val inside = list.indexOfFirst { pos in it.startMs..it.endMs }
+            val targetIdx = if (inside >= 0) {
+                inside
+            } else {
+                list.indexOfFirst { it.startMs > pos }.takeIf { it >= 0 } ?: 0
+            }
+            val target = list[targetIdx]
+            if (inside < 0) {
+                lastHighlightJumpMs = System.currentTimeMillis()
+                player.seekTo(target.startMs)
+            }
+            _state.update { it.copy(highlightsMode = true, activeHighlightIndex = target.index) }
+        } else {
+            _state.update { it.copy(highlightsMode = false) }
+        }
+    }
+
+    fun jumpHighlight(delta: Int) {
+        val list = _state.value.highlights
+        if (list.isEmpty()) return
+        val pos = player.currentPosition.coerceAtLeast(0L)
+        val curIdx = list.indexOfFirst { pos in it.startMs..it.endMs }
+            .takeIf { it >= 0 }
+            ?: list.indexOfFirst { it.startMs > pos }.takeIf { it >= 0 }
+            ?: 0
+        val nextIdx = ((curIdx + delta) % list.size + list.size) % list.size
+        val target = list[nextIdx]
+        lastHighlightJumpMs = System.currentTimeMillis()
+        player.seekTo(target.startMs)
+        _state.update { it.copy(highlightsMode = true, activeHighlightIndex = target.index) }
+    }
+
+    private fun checkHighlights(posMs: Long, durMs: Long) {
+        val st = _state.value
+        val list = st.highlights
+        if (!st.highlightsMode || list.isEmpty() || !player.isPlaying || durMs <= 0L) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastHighlightJumpMs < 900L) return
+
+        val upcoming = list.firstOrNull { posMs < (it.endMs - 200L).coerceAtLeast(0L) }
+        if (upcoming == null) {
+            _state.update { it.copy(highlightsMode = false) }
+            showSkipToast("Finished highlights")
+            return
+        }
+        if (posMs + 250L < upcoming.startMs) {
+            lastHighlightJumpMs = now
+            player.seekTo(upcoming.startMs)
+        }
+        if (st.activeHighlightIndex != upcoming.index) {
+            _state.update { it.copy(activeHighlightIndex = upcoming.index) }
+        }
     }
 
     suspend fun stopAndSave() {

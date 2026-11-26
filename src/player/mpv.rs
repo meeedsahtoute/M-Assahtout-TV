@@ -304,6 +304,7 @@ const OBSERVED: &[(&str, c_int)] = &[
     ("dwidth", MPV_FORMAT_DOUBLE),
     ("dheight", MPV_FORMAT_DOUBLE),
     ("core-idle", MPV_FORMAT_FLAG),
+    ("af-metadata/silencedetect", MPV_FORMAT_STRING),
 ];
 
 #[cfg(windows)]

@@ -428,6 +428,7 @@ impl WatchPage {
                             if p.video.as_ref().map(|v| v.id == full.id).unwrap_or(false) {
                                 p.chapters = chapters;
                                 p.heatmap = heatmap;
+                                p.refresh_highlights();
                                 let dur = p.video.as_ref().and_then(|v| v.duration_secs);
                                 let mut v = full.clone();
                                 v.duration_secs = dur.or(Some(p.duration as u64));

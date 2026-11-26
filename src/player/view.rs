@@ -8,6 +8,7 @@ use crate::store;
 use crate::ui::app::{Route, UiState, navigate, open_menu};
 use crate::ui::cards::download_menu_items;
 use crate::ui::{icon, icon_button, pal};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::*;
 use gpui_kit::prelude::*;
 use std::cell::Cell;
@@ -92,6 +93,8 @@ pub struct PlayerView {
     area: Rc<Cell<Bounds<Pixels>>>,
     /// the annotation under the pointer (shows a highlight's rollover text)
     hover_annotation: Option<String>,
+    search_input: Option<(Entity<InputState>, Subscription)>,
+    search_was_open: bool,
     _sub: Subscription,
 }
 
@@ -122,8 +125,34 @@ impl PlayerView {
             pip_move_echo: false,
             area: Rc::new(Cell::new(Bounds::default())),
             hover_annotation: None,
+            search_input: None,
+            search_was_open: false,
             _sub: sub,
         }
+    }
+
+    fn ensure_search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+        if let Some((st, _)) = &self.search_input {
+            return st.clone();
+        }
+        let st = cx.new(|cx| InputState::new(window, cx).placeholder(translate("Search inside video…")));
+        let player = self.player.clone();
+        let sub = cx.subscribe_in(&st, window, move |this: &mut Self, state, ev: &InputEvent, _, cx| {
+            if let InputEvent::PressEnter { .. } = ev {
+                let q = state.read(cx).value().to_string();
+                let first = player.read(cx).search_transcript(&q).into_iter().next();
+                if let Some(hit) = first {
+                    player.update(cx, |p, cx| {
+                        p.seek_to(hit.start_ms as f64 / 1000.0);
+                        p.set_search_open(false, cx);
+                    });
+                    this.poke(cx);
+                }
+            }
+        });
+        cx.observe(&st, |_, _, cx| cx.notify()).detach();
+        self.search_input = Some((st.clone(), sub));
+        st
     }
 
     fn poke(&mut self, cx: &mut Context<Self>) {
@@ -657,6 +686,24 @@ impl Render for PlayerView {
         if show {
             root = root.child(self.render_controls(time, duration, ui, window, cx));
         }
+        let hl_active = self.player.read(cx).highlights_mode;
+        if hl_active && !mini {
+            if let Some(el) = self.render_highlight_pill(cx) {
+                root = root.child(el);
+            }
+        }
+        let search_open = self.player.read(cx).search_open && !mini && !self.pip;
+        if search_open {
+            let input = self.ensure_search_input(window, cx);
+            if !self.search_was_open {
+                self.search_was_open = true;
+                let fh = input.read(cx).focus_handle(cx);
+                window.focus(&fh, cx);
+            }
+            root = root.child(self.render_video_search(input, window, cx));
+        } else {
+            self.search_was_open = false;
+        }
         if let Some(m) = self.menu {
             root = root.child(self.render_menu(m, cx));
         }
@@ -980,6 +1027,12 @@ impl PlayerView {
         let storyboard = pl.storyboard.clone();
         let st = store::settings_snapshot();
         let heatmap = if st.show_heatmap { pl.heatmap.clone() } else { Vec::new() };
+        let highlights = pl.highlights.clone();
+        let highlights_mode = pl.highlights_mode;
+        let has_highlights = !highlights.is_empty();
+        let channel_speed = pl.base_speed;
+        let channel_speed_saved = pl.channel_speed_saved;
+        let channel_name = pl.video.as_ref().map(|v| v.channel_name.clone()).filter(|n| !n.is_empty());
         let jump_to = if st.jump_ahead && !self.mini { pl.jump_ahead_target() } else { None };
         let has_next = pl.queue_pos.map(|i| i + 1 < pl.queue.len()).unwrap_or(false) || crate::ui::app::has_autoplay_next(cx);
         let chapter_title = pl.current_chapter().map(|c| c.title.clone());
@@ -1086,6 +1139,22 @@ impl PlayerView {
                         .left(relative(a))
                         .w(relative(w))
                         .bg(rgb(services::sponsor_category_color(&s.category))),
+                );
+            }
+        }
+        if duration > 0.0 && !highlights.is_empty() {
+            for pk in &highlights {
+                let a = ((pk.start_ms as f64 / 1000.0) / duration).clamp(0.0, 0.995) as f32;
+                let w = (((pk.end_ms.saturating_sub(pk.start_ms)) as f64 / 1000.0) / duration).max(0.006) as f32;
+                bar = bar.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .h(px(3.5))
+                        .left(relative(a))
+                        .w(relative(w))
+                        .rounded_full()
+                        .bg(if highlights_mode { rgb(0xffd54f) } else { hsla(0.11, 0.95, 0.65, 0.85) }),
                 );
             }
         }
@@ -1300,6 +1369,103 @@ impl PlayerView {
                         .tooltip(|window, cx| component::tooltip::Tooltip::new(translate("Jump ahead")).build(window, cx))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.player.update(cx, |p, _| p.seek_to(t));
+                            this.poke(cx);
+                        })),
+                )
+            })
+            .when((channel_speed_saved || (channel_speed - 1.0).abs() > 0.01) && bar_w >= 460.0, |d| {
+                let speed_tag = if let Some(ch) = channel_name.as_deref().filter(|_| !narrow) {
+                    let short: String = ch.chars().take(12).collect();
+                    format!("{channel_speed:.2}x • {short}")
+                } else {
+                    format!("{channel_speed:.2}x")
+                };
+                d.child(
+                    div()
+                        .id("c-ch-speed")
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap_1()
+                        .h_8()
+                        .px(px(10.))
+                        .rounded_full()
+                        .bg(hsla(0., 0., 1., 0.14))
+                        .border_1()
+                        .border_color(hsla(0., 0., 1., 0.16))
+                        .text_xs()
+                        .text_color(white())
+                        .child(
+                            div()
+                                .id("c-ch-speed-open")
+                                .cursor_pointer()
+                                .child(speed_tag)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.menu = Some(Menu::Speed);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id("c-ch-speed-reset")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size_4()
+                                .rounded_full()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(hsla(0., 0., 1., 0.25)))
+                                .tooltip(|window, cx| component::tooltip::Tooltip::new(translate("Reset speed to 1.0x")).build(window, cx))
+                                .child(icon("x").size_4().text_color(white()))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.player.update(cx, |p, cx| p.reset_channel_speed(cx));
+                                    this.poke(cx);
+                                })),
+                        ),
+                )
+            })
+            .when(has_highlights && !self.mini && bar_w >= 420.0, |d| {
+                let hl_lbl = if highlights_mode {
+                    if let Some(pk) = self.player.read(cx).active_highlight() {
+                        format!("{} {}/{}", translate("Highlights"), pk.index, pk.total)
+                    } else {
+                        translate("Highlights").to_string()
+                    }
+                } else {
+                    translate("Highlights").to_string()
+                };
+                d.child(
+                    div()
+                        .id("c-highlights")
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .gap_1()
+                        .h_8()
+                        .px(px(10.))
+                        .rounded_full()
+                        .bg(if highlights_mode { rgb(0xffd54f) } else { hsla(0., 0., 1., 0.14) })
+                        .hover(|s| s.bg(if highlights_mode { rgb(0xffe082) } else { hsla(0., 0., 1., 0.24) }))
+                        .cursor_pointer()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(if highlights_mode { black() } else { white() })
+                        .child(icon("sparkles").size_4().text_color(if highlights_mode { black() } else { rgb(0xffd54f) }))
+                        .when(!narrow, |b| b.child(hl_lbl))
+                        .tooltip(|window, cx| component::tooltip::Tooltip::new(translate("Auto-Highlight Reel")).build(window, cx))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.player.update(cx, |p, cx| p.toggle_highlights(cx));
+                            this.poke(cx);
+                        })),
+                )
+            })
+            .when(!self.mini && !self.pip, |d| {
+                d.child(
+                    ctl_btn("c-vsearch", "search")
+                        .tooltip(|window, cx| component::tooltip::Tooltip::new(translate("Search inside video (Ctrl+F)")).build(window, cx))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.player.update(cx, |p, cx| p.set_search_open(!p.search_open, cx));
                             this.poke(cx);
                         })),
                 )
@@ -1566,11 +1732,25 @@ impl PlayerView {
                 let audio_tracks = pl.audio_tracks();
                 let audio_only = pl.audio_only;
                 let looping = pl.loop_video;
-                let speed = pl.speed;
+                let skip_silence = pl.skip_silence;
+                let speed = pl.base_speed;
                 let source = pl.streams.as_ref().map(|s| s.source).unwrap_or("");
                 panel = panel
                     .child(row("m-q".into(), Some("sliders-horizontal"), translate("Quality").into(), Some(q), false).on_click(cx.listener(|t, _, _, cx| { t.menu = Some(Menu::Quality); cx.notify() })))
                     .child(row("m-s".into(), Some("gauge"), translate("Playback speed").into(), Some(speed_label(speed)), false).on_click(cx.listener(|t, _, _, cx| { t.menu = Some(Menu::Speed); cx.notify() })))
+                    .child(
+                        row("m-ss".into(), Some("fast-forward"), translate("Skip silence").into(), Some(translate(if skip_silence { "On" } else { "Off" }).into()), skip_silence)
+                            .on_click(cx.listener(move |t, _, _, cx| {
+                                t.player.update(cx, |p, cx| p.set_skip_silence(!skip_silence, cx));
+                            })),
+                    )
+                    .child(
+                        row("m-vs".into(), Some("search"), translate("Search inside video").into(), Some("Ctrl+F".into()), false)
+                            .on_click(cx.listener(|t, _, _, cx| {
+                                t.menu = None;
+                                t.player.update(cx, |p, cx| p.set_search_open(true, cx));
+                            })),
+                    )
                     .child(row("m-c".into(), Some("captions"), translate("Subtitles/CC").into(), Some(caption), false).on_click(cx.listener(|t, _, _, cx| { t.menu = Some(Menu::Captions); cx.notify() })))
                     .when(audio_tracks.len() > 1, |d| {
                         let cur = pl.audio_track.clone().unwrap_or_else(|| translate("Default").into());
@@ -1654,8 +1834,19 @@ impl PlayerView {
                 }
             }
             Menu::Speed => {
-                let cur = pl.speed;
+                let cur = pl.base_speed;
+                let ch_saved = pl.channel_speed_saved;
                 panel = panel.child(header("Playback speed", cx));
+                if ch_saved || (cur - 1.0).abs() > 0.01 {
+                    panel = panel.child(
+                        row("s-reset-ch".into(), Some("x"), translate("Reset channel speed (1.0x)").into(), None, false).on_click(
+                            cx.listener(|t, _, _, cx| {
+                                t.menu = None;
+                                t.player.update(cx, |p, cx| p.reset_channel_speed(cx));
+                            }),
+                        ),
+                    );
+                }
                 for s in [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0] {
                     panel = panel.child(
                         row(SharedString::from(format!("s-{s}")), None, speed_label(s), None, (cur - s).abs() < 0.001)
@@ -1672,9 +1863,9 @@ impl PlayerView {
                         .justify_center()
                         .gap_3()
                         .py_2()
-                        .child(div().id("s-dec").px_3().py_1().rounded_md().bg(hsla(0., 0., 1., 0.15)).cursor_pointer().text_color(white()).child("− 0.05").on_click(cx.listener(|t, _, _, cx| t.player.update(cx, |p, cx| { let s = p.speed; p.set_speed(s - 0.05); cx.notify() }))))
+                        .child(div().id("s-dec").px_3().py_1().rounded_md().bg(hsla(0., 0., 1., 0.15)).cursor_pointer().text_color(white()).child("− 0.05").on_click(cx.listener(|t, _, _, cx| t.player.update(cx, |p, cx| { let s = p.base_speed; p.set_speed(s - 0.05); cx.notify() }))))
                         .child(div().text_color(white()).text_sm().child(format!("{:.2}x", cur)))
-                        .child(div().id("s-inc").px_3().py_1().rounded_md().bg(hsla(0., 0., 1., 0.15)).cursor_pointer().text_color(white()).child("+ 0.05").on_click(cx.listener(|t, _, _, cx| t.player.update(cx, |p, cx| { let s = p.speed; p.set_speed(s + 0.05); cx.notify() })))),
+                        .child(div().id("s-inc").px_3().py_1().rounded_md().bg(hsla(0., 0., 1., 0.15)).cursor_pointer().text_color(white()).child("+ 0.05").on_click(cx.listener(|t, _, _, cx| t.player.update(cx, |p, cx| { let s = p.base_speed; p.set_speed(s + 0.05); cx.notify() })))),
                 );
             }
             Menu::Captions => {
@@ -1730,5 +1921,270 @@ impl PlayerView {
             .bottom(px(64.))
             .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(panel.relative().right_0().bottom_0())
+    }
+
+    /// Floating HUD pill showing active highlight progress + Prev / Next / Exit actions.
+    fn render_highlight_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let pk = self.player.read(cx).active_highlight()?.clone();
+        let label = pk
+            .label
+            .clone()
+            .map(|l| format!("⚡ Highlight {}/{} • {l}", pk.index, pk.total))
+            .unwrap_or_else(|| format!("⚡ Highlight {}/{}", pk.index, pk.total));
+        Some(
+            div()
+                .id("hl-pill")
+                .absolute()
+                .top_3()
+                .right_3()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py(px(6.))
+                .rounded_full()
+                .bg(hsla(0., 0., 0.09, 0.90))
+                .border_1()
+                .border_color(rgb(0xffd54f))
+                .text_xs()
+                .text_color(white())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(div().font_weight(FontWeight::SEMIBOLD).text_color(rgb(0xffd54f)).max_w(px(260.)).truncate().child(label))
+                .child(
+                    div()
+                        .id("hl-prev")
+                        .px_2()
+                        .py(px(2.))
+                        .rounded_full()
+                        .bg(rgb(0x272727))
+                        .hover(|s| s.bg(hsla(0., 0., 1., 0.22)))
+                        .cursor_pointer()
+                        .child("Prev")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.player.update(cx, |p, cx| p.jump_highlight(-1, cx));
+                        })),
+                )
+                .child(
+                    div()
+                        .id("hl-next")
+                        .px_2()
+                        .py(px(2.))
+                        .rounded_full()
+                        .bg(rgb(0x272727))
+                        .hover(|s| s.bg(hsla(0., 0., 1., 0.22)))
+                        .cursor_pointer()
+                        .child("Next")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.player.update(cx, |p, cx| p.jump_highlight(1, cx));
+                        })),
+                )
+                .child(
+                    div()
+                        .id("hl-exit")
+                        .px_2()
+                        .py(px(2.))
+                        .rounded_full()
+                        .bg(hsla(0., 0.78, 0.45, 0.85))
+                        .hover(|s| s.bg(hsla(0., 0.85, 0.55, 0.95)))
+                        .cursor_pointer()
+                        .child(translate("Exit"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.player.update(cx, |p, cx| p.toggle_highlights(cx));
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Floating YouTube-dark `#181818` / `#272727` In-Video Search overlay with Smart Topic Chips.
+    fn render_video_search(
+        &self,
+        input: Entity<InputState>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let query = input.read(cx).value().to_string();
+        let (loading, err, chips, lang, hits) = {
+            let pl = self.player.read(cx);
+            let chips = pl.transcript.as_ref().map(|t| t.chips.clone()).unwrap_or_default();
+            let lang = pl.transcript.as_ref().map(|t| t.language.clone()).unwrap_or_default();
+            let hits = if query.trim().is_empty() {
+                pl.transcript
+                    .as_ref()
+                    .map(|t| {
+                        t.segments
+                            .iter()
+                            .take(18)
+                            .map(|s| crate::transcript::TranscriptSearchHit {
+                                start_ms: s.start_ms,
+                                duration_ms: s.duration_ms,
+                                text: s.text.clone(),
+                                score: 50,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                pl.search_transcript(&query)
+            };
+            (pl.transcript_loading, pl.transcript_error.clone(), chips, lang, hits)
+        };
+        let input_for_chips = input.clone();
+
+        div()
+            .id("vsearch-panel")
+            .absolute()
+            .top_4()
+            .left_4()
+            .w(px(460.))
+            .max_h(px(440.))
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .p_3()
+            .rounded_xl()
+            .bg(rgb(0x181818))
+            .border_1()
+            .border_color(hsla(0., 0., 1., 0.14))
+            .text_color(white())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py(px(6.))
+                    .rounded_lg()
+                    .bg(rgb(0x272727))
+                    .child(icon("search").size_4().text_color(hsla(0., 0., 1., 0.7)))
+                    .child(div().flex_1().min_w_0().child(Input::new(&input).appearance(false)))
+                    .when(!lang.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .px(px(6.))
+                                .py(px(2.))
+                                .rounded_md()
+                                .bg(hsla(0., 0., 1., 0.1))
+                                .text_xs()
+                                .text_color(hsla(0., 0., 1., 0.7))
+                                .child(lang),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id("vsearch-close")
+                            .size_6()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(hsla(0., 0., 1., 0.15)))
+                            .child(icon("x").size_4().text_color(white()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.player.update(cx, |p, cx| p.set_search_open(false, cx));
+                            })),
+                    ),
+            )
+            .when(!chips.is_empty(), |d| {
+                d.child(
+                    div().flex().flex_wrap().gap(px(6.)).children(chips.into_iter().enumerate().map(|(i, chip)| {
+                        let st = input_for_chips.clone();
+                        let active = query.trim().eq_ignore_ascii_case(&chip);
+                        div()
+                            .id(SharedString::from(format!("vs-chip-{i}")))
+                            .px(px(10.))
+                            .py_1()
+                            .rounded_full()
+                            .bg(if active { white() } else { rgb(0x272727) })
+                            .hover(|s| s.bg(if active { white() } else { rgb(0x3a3a3a) }))
+                            .cursor_pointer()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(if active { black() } else { white() })
+                            .child(chip.clone())
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                let c = chip.clone();
+                                st.update(cx, |s, cx| s.set_value(c, window, cx));
+                                cx.notify();
+                            }))
+                    })),
+                )
+            })
+            .when(loading, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .py_4()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(hsla(0., 0., 1., 0.75))
+                        .child(icon("loader-circle").size_4().text_color(white()))
+                        .child(translate("Indexing captions…")),
+                )
+            })
+            .when_some(err.filter(|_| !loading), |d, msg| {
+                d.child(div().py_3().px_2().text_sm().text_color(hsla(0., 0., 1., 0.65)).child(msg))
+            })
+            .when(!loading && err.is_none(), |d| {
+                d.child(
+                    div()
+                        .id("vsearch-results")
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .max_h(px(270.))
+                        .overflow_y_scroll()
+                        .when(hits.is_empty(), |r| {
+                            r.child(
+                                div()
+                                    .py_4()
+                                    .text_center()
+                                    .text_sm()
+                                    .text_color(hsla(0., 0., 1., 0.6))
+                                    .child(translate("No spoken matches found")),
+                            )
+                        })
+                        .children(hits.into_iter().enumerate().map(|(i, hit)| {
+                            let secs = hit.start_ms / 1000;
+                            let target = hit.start_ms as f64 / 1000.0;
+                            div()
+                                .id(SharedString::from(format!("vs-hit-{i}")))
+                                .flex()
+                                .items_start()
+                                .gap(px(10.))
+                                .p_2()
+                                .rounded_lg()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(0x272727)))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.player.update(cx, |p, cx| {
+                                        p.seek_to(target);
+                                        p.set_search_open(false, cx);
+                                    });
+                                    this.poke(cx);
+                                }))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .px_2()
+                                        .py(px(2.))
+                                        .rounded_md()
+                                        .bg(hsla(0.58, 0.9, 0.55, 0.22))
+                                        .text_xs()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(0x3ea6ff))
+                                        .child(format_duration(secs)),
+                                )
+                                .child(div().flex_1().text_sm().text_color(white()).child(hit.text))
+                        })),
+                )
+            })
     }
 }

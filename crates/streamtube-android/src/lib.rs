@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use streamtube_core::api::{auth, http, innertube, json as yt_json, services, streams, types::*, web};
-use streamtube_core::{feed, import, links, proxy, recommend, store};
+use streamtube_core::{feed, highlights, import, links, proxy, recommend, store, transcript};
 
 const UPDATE_REPO: &str = "meeedsahtoute/M-Assahtout-TV";
 
@@ -152,6 +152,8 @@ struct WatchBundleDto {
     votes: Option<services::Votes>,
     resume_secs: f64,
     channel_speed: Option<f64>,
+    channel_skip_silence: Option<bool>,
+    highlights: Vec<highlights::HighlightPeak>,
     rating: i8,
     is_subscribed: bool,
     in_watch_later: bool,
@@ -977,6 +979,11 @@ pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeGetWatchBu
         } else {
             None
         };
+        let channel_skip_silence = (!channel_id.is_empty())
+            .then(|| store::channel_skip_silence(&channel_id))
+            .flatten();
+        let duration_secs = stream_info.length_secs as f64;
+        let highlights = highlights::extract_highlights(&watch.heatmap, &watch.chapters, duration_secs);
         let rating = store::rating(&vid);
         let is_subscribed = !channel_id.is_empty() && store::is_subscribed(&channel_id);
         let local_pls = store::playlists();
@@ -995,6 +1002,8 @@ pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeGetWatchBu
             votes: ryd_res,
             resume_secs,
             channel_speed,
+            channel_skip_silence,
+            highlights,
             rating,
             is_subscribed,
             in_watch_later,
@@ -1496,6 +1505,70 @@ pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeSetChannel
             store::set_channel_speed(&cid, speed);
         }
         Ok(true)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeClearChannelSpeed(
+    mut env: JNIEnv,
+    _cls: JClass,
+    channel_id: JString,
+) -> jstring {
+    let cid = req_str(&mut env, channel_id);
+    jni_json(&mut env, || {
+        if !cid.is_empty() {
+            store::clear_channel_speed(&cid);
+        }
+        Ok(true)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeSetChannelSkipSilence(
+    mut env: JNIEnv,
+    _cls: JClass,
+    channel_id: JString,
+    skip: jboolean,
+) -> jstring {
+    let cid = req_str(&mut env, channel_id);
+    let enabled = skip != 0;
+    jni_json(&mut env, || {
+        if !cid.is_empty() {
+            store::set_channel_skip_silence(&cid, enabled);
+        }
+        Ok(true)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeFetchTranscript(
+    mut env: JNIEnv,
+    _cls: JClass,
+    captions_json: JString,
+    preferred_lang: JString,
+) -> jstring {
+    let raw = req_str(&mut env, captions_json);
+    let pref = req_str(&mut env, preferred_lang);
+    jni_json(&mut env, || {
+        let tracks: Vec<CaptionTrack> =
+            serde_json::from_str(&raw).context("invalid captions json")?;
+        transcript::fetch_transcript(&tracks, &pref)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_streamtube_tv_core_NativeBridge_nativeSearchTranscript(
+    mut env: JNIEnv,
+    _cls: JClass,
+    segments_json: JString,
+    query: JString,
+) -> jstring {
+    let raw = req_str(&mut env, segments_json);
+    let q = req_str(&mut env, query);
+    jni_json(&mut env, || {
+        let segments: Vec<transcript::TranscriptSegment> =
+            serde_json::from_str(&raw).context("invalid segments json")?;
+        Ok(transcript::search_segments(&segments, &q, 32))
     })
 }
 
