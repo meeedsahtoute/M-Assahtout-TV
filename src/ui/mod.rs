@@ -409,11 +409,9 @@ pub fn copy_to_clipboard(text: String, cx: &mut App) {
 pub const BRAND_PINK: u32 = 0xF0307E;
 pub const BRAND_VIOLET: u32 = 0x7A3CF5;
 
-/// The Stream Tube app logo.
-/// The logo, in the current accent colour.
+/// The M. ASSAHTOUT TV app circular logo.
 pub fn logo(size: Pixels) -> Img {
-    let accent = app_icon::icon_accent(crate::store::settings_snapshot().accent);
-    img(SharedString::from(format!("brand/logo-{accent:06x}.svg"))).size(size).flex_none()
+    img(SharedString::from("brand/logo.png")).size(size).flex_none()
 }
 
 /// App wordmark next to the logo.
